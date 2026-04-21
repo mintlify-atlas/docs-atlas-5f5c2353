@@ -1,0 +1,159 @@
+---
+title: "Audit logging and server monitoring in go-admin apps"
+description: "Understand go-admin's operation logs, login logs, logger configuration options, and the server monitor endpoint that reports CPU, memory, and disk usage."
+---
+
+go-admin records two types of audit logs — operation logs that capture every API request and login logs that capture each authentication attempt — and exposes a server monitor endpoint that reports real-time system resource usage. All logging behaviour is controlled through the `logger` section of `settings.yml`.
+
+## Logger configuration
+
+Open `config/settings.yml` and locate the `logger` block:
+
+```yaml
+settings:
+  logger:
+    # Directory where log files are written
+    path: temp/logs
+    # Log output destination: 'file' writes to path, 'default' or empty writes to stdout
+    stdout: ''
+    # Minimum log level: trace, debug, info, warn, error, fatal
+    level: trace
+    # Write operation logs to the database via the in-memory queue
+    enableddb: false
+```
+
+**Log levels** from least to most severe: `trace`, `debug`, `info`, `warn`, `error`, `fatal`. Setting `level: info` suppresses `trace` and `debug` entries.
+
+When `stdout` is empty or set to `default`, log output goes to the console and is not written to the file path. Set `stdout: file` to write to `path` instead.
+
+When `enableddb` is `true`, the `LoggerToFile` middleware captures each request's metadata and pushes it onto the in-memory queue as an `OperateLog` message. A queue consumer reads those messages and persists them to the `sys_opera_log` table.
+
+## Operation logs
+
+Operation logs record every API request processed by go-admin (login and logout URLs are excluded). The `LoggerToFile` middleware in `common/middleware/logger.go` captures the following fields for each request:
+
+| Field | Description |
+|-------|-------------|
+| `operUrl` | Full request URI including query string |
+| `operIp` | Client IP address |
+| `operName` | Username of the authenticated user |
+| `requestMethod` | HTTP method (`GET`, `POST`, `PUT`, `DELETE`) |
+| `operParam` | Request body |
+| `jsonResult` | Response body |
+| `latencyTime` | Request duration as a formatted duration string |
+| `statusCode` | HTTP response status code |
+| `userAgent` | Browser User-Agent header |
+| `operTime` | Timestamp when the request was processed |
+| `status` | Business-level status: success or failure |
+
+Operation logs are only written to the database when `logger.enableddb: true` is set in `settings.yml` and the response status code is not `404`.
+
+### Viewing operation logs
+
+Navigate to **System Monitor → Operation Logs** in the admin UI. The list supports filtering by:
+- Title / description
+- HTTP method
+- Request URL
+- Client IP address
+- Status
+- Date range (`beginTime` / `endTime`)
+
+The underlying API endpoints are:
+
+```
+GET    /api/v1/sys-opera-log          # Paginated list with filters
+GET    /api/v1/sys-opera-log/{id}     # Single log entry by ID
+DELETE /api/v1/sys-opera-log          # Batch delete by IDs
+```
+
+## Login logs
+
+Login logs capture each authentication attempt, whether successful or not. The following fields are recorded:
+
+| Field | Description |
+|-------|-------------|
+| `username` | The username submitted during login |
+| `ipaddr` | Client IP address |
+| `loginLocation` | Geographic location resolved from the IP |
+| `status` | Login result status |
+| `beginTime` / `endTime` | Filterable time range |
+
+### Viewing login logs
+
+Navigate to **System Monitor → Login Logs** in the admin UI. The list supports filtering by username, IP address, location, status, and date range.
+
+The underlying API endpoints are:
+
+```
+GET    /api/v1/sys-login-log          # Paginated list with filters
+GET    /api/v1/sys-login-log/{id}     # Single log entry by ID
+DELETE /api/v1/sys-login-log          # Batch delete by IDs
+```
+
+## Server monitor
+
+The server monitor endpoint returns a snapshot of current system resource usage collected via the `gopsutil` library.
+
+```
+GET /api/v1/server-monitor
+Authorization: Bearer <token>
+```
+
+**Response structure:**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "os": {
+      "goOs": "linux",
+      "arch": "amd64",
+      "compiler": "gc",
+      "version": "go1.21.0",
+      "numGoroutine": 42,
+      "ip": "10.0.0.1",
+      "projectDir": "/app",
+      "hostName": "prod-server-01",
+      "time": "2026-04-21 09:00:00"
+    },
+    "cpu": {
+      "cpuNum": 4,
+      "percent": 12.50,
+      "cpuInfo": [ ... ]
+    },
+    "mem": {
+      "total": 8192,
+      "used": 3200,
+      "percent": 39.06
+    },
+    "swap": {
+      "total": 2048,
+      "used": 128
+    },
+    "disk": {
+      "total": 50,
+      "used": 20,
+      "percent": 40.00
+    },
+    "net": {
+      "in": 1.25,
+      "out": 0.80
+    },
+    "bootTime": 72
+  }
+}
+```
+
+**Field notes:**
+
+- `mem.total` and `mem.used` are in **MB**.
+- `disk.total` and `disk.used` are in **GB**, reporting the root filesystem (`/`).
+- `net.in` and `net.out` are in **KB/s**, excluding loopback, tunnel, Docker, veth, bridge, and Kubernetes virtual interfaces.
+- `bootTime` is the number of hours since the system last booted.
+- `cpu.percent` is the overall CPU usage percentage across all cores, rounded to two decimal places.
+
+The server monitor page in the admin UI (`System Monitor → Server Monitor`) polls this endpoint and renders the values as gauges and statistics cards.
+
+<Tip>
+The network throughput values (`net.in` / `net.out`) reflect cumulative interface counters measured at the moment of the request. For accurate per-second rates, poll the endpoint at a fixed interval and compute the delta between successive readings.
+</Tip>

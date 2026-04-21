@@ -1,0 +1,164 @@
+---
+title: "Upload and store files with go-admin storage backends"
+description: "Configure go-admin's file upload API to store files locally or route them to Alibaba Cloud OSS, Qiniu Cloud Kodo, or Huawei Cloud OBS."
+---
+
+go-admin provides a single file upload endpoint that saves files locally and optionally pushes them to a cloud object storage backend. Three third-party backends are supported out of the box — Alibaba Cloud OSS, Qiniu Cloud Kodo, and Huawei Cloud OBS — each implemented in the `common/file_store/` package as a driver satisfying the `FileStoreType` interface.
+
+## Upload endpoint
+
+```
+POST /api/v1/public/uploadFile
+Authorization: Bearer <token>
+Content-Type: multipart/form-data
+```
+
+**Form fields:**
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `type` | No | Upload mode: `1` = single file, `2` = multiple files, `3` = base64-encoded image. Defaults to single file. |
+| `file` | Yes | The file or files to upload. |
+| `source` | No | Storage backend: omit or `1` = local only, `2` = Alibaba OSS, `3` = Qiniu Kodo. |
+
+**Single-file response:**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "size": 204800,
+    "path": "/static/uploadfile/550e8400-e29b-41d4-a716-446655440000.png",
+    "full_path": "http://your-host/static/uploadfile/550e8400-e29b-41d4-a716-446655440000.png",
+    "name": "original-filename.png",
+    "type": "image/png"
+  },
+  "msg": "上传成功"
+}
+```
+
+**Multiple-file response** (`type=2`) returns an array of the same object structure.
+
+Files are always saved to `static/uploadfile/` on the local filesystem with a UUID-based filename to prevent collisions. When a cloud backend is selected via `source`, the file is uploaded to the cloud in addition to being saved locally.
+
+<Note>
+The `path` and `full_path` fields returned for cloud-backed uploads still point to the local path (`/static/uploadfile/<uuid>.<ext>`). For cloud-hosted URLs, retrieve the public URL directly from the object storage bucket using the object key `img/<uuid>.<ext>`.
+</Note>
+
+## Storage backends
+
+<Tabs>
+  <Tab title="Local (default)">
+    Files are saved to the `static/uploadfile/` directory relative to the go-admin working directory and served as static files by Gin. No additional configuration is required.
+
+    To use local storage, omit the `source` field or set it to `1` when calling the upload endpoint.
+
+    The local path is defined in `app/other/apis/file.go`:
+
+    ```go
+    const path = "static/uploadfile/"
+    ```
+  </Tab>
+
+  <Tab title="Alibaba Cloud OSS">
+    Alibaba Cloud Object Storage Service (OSS) is selected by passing `source=2` in the upload request.
+
+    Configure the OSS client using the `OXS` struct with the `AliYunOSS` driver:
+
+    ```go
+    import "go-admin/common/file_store"
+
+    store := file_store.OXS{
+        Endpoint:        "https://oss-cn-hangzhou.aliyuncs.com",
+        AccessKeyID:     "<your-access-key-id>",
+        AccessKeySecret: "<your-access-key-secret>",
+        BucketName:      "<your-bucket-name>",
+    }
+    client := store.Setup(file_store.AliYunOSS)
+    ```
+
+    The OSS driver uploads files using multipart upload with a 100 KB part size, 3 concurrent threads, and checkpointing enabled for resumable uploads.
+
+    Files are stored under the object key `img/<filename>` in the configured bucket.
+  </Tab>
+
+  <Tab title="Qiniu Cloud Kodo">
+    Qiniu Cloud Kodo is selected by passing `source=3` in the upload request.
+
+    Configure the Kodo client using the `OXS` struct with the `QiNiuKodo` driver:
+
+    ```go
+    import "go-admin/common/file_store"
+
+    store := file_store.OXS{
+        Endpoint:        "<your-domain>",
+        AccessKeyID:     "<your-access-key>",
+        AccessKeySecret: "<your-secret-key>",
+        BucketName:      "<your-bucket-name>",
+    }
+    client := store.Setup(file_store.QiNiuKodo)
+    ```
+
+    The Kodo driver defaults to the **East China (Huadong)** zone. To use a different zone, pass a `ClientOption` with a `Zone` key:
+
+    ```go
+    client := store.Setup(
+        file_store.QiNiuKodo,
+        file_store.ClientOption{"Zone": file_store.HuaBei},
+    )
+    ```
+
+    Available zone constants: `HuaDong`, `HuaBei`, `HuaNan`, `BeiMei`, `XinJiaPo`.
+
+    Files are stored under the object key `img/<filename>`.
+  </Tab>
+
+  <Tab title="Huawei Cloud OBS">
+    Huawei Cloud Object Storage Service (OBS) is configured programmatically using the `HuaweiOBS` driver. There is no `source` shortcut in the upload endpoint for OBS — integrate it directly via the `file_store` package in custom code.
+
+    ```go
+    import "go-admin/common/file_store"
+
+    store := file_store.OXS{
+        Endpoint:        "https://obs.cn-north-4.myhuaweicloud.com",
+        AccessKeyID:     "<your-access-key-id>",
+        AccessKeySecret: "<your-secret-access-key>",
+        BucketName:      "<your-bucket-name>",
+    }
+    client := store.Setup(file_store.HuaweiOBS)
+    ```
+
+    The OBS driver uses `PutFile` for uploads, storing the file under the object key you provide.
+  </Tab>
+</Tabs>
+
+## FileStoreType interface
+
+All backends implement the same interface defined in `common/file_store/interface.go`:
+
+```go
+type FileStoreType interface {
+    // Setup initialises the client with credentials and bucket name
+    Setup(endpoint, accessKeyID, accessKeySecret, BucketName string, options ...ClientOption) error
+    // UpLoad uploads localFile to the storage backend under yourObjectName
+    UpLoad(yourObjectName string, localFile interface{}) error
+    // GetTempToken returns a temporary upload token (Kodo only; others return "")
+    GetTempToken() (string, error)
+}
+```
+
+You can implement this interface to add a custom storage backend without modifying the core upload handler.
+
+## Switching backends
+
+The upload endpoint selects the backend based on the `source` form field at request time, so switching is as simple as changing the `source` value the frontend sends. There is no global backend setting — each upload call specifies its destination independently.
+
+| `source` value | Backend |
+|---------------|---------|
+| omitted or `1` | Local filesystem |
+| `2` | Alibaba Cloud OSS |
+| `3` | Qiniu Cloud Kodo |
+
+<Tip>
+To enforce a single backend for all uploads in your application, set the `source` value as a constant in your frontend API module generated by the code generator, rather than exposing it as a user-configurable option.
+</Tip>

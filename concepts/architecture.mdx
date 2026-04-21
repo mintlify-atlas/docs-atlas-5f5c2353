@@ -1,0 +1,136 @@
+---
+title: "go-admin architecture and project structure overview"
+description: "Understand go-admin's layered architecture: CLI commands, routers, API handlers, services, and GORM models, and how each layer fits the request lifecycle."
+---
+
+go-admin is organized as a layered Go application built on top of the `github.com/go-admin-team/go-admin-core/sdk` runtime. Each incoming HTTP request passes through a well-defined set of layers — middleware, router, API handler, service, and model — before touching the database. Understanding how these layers interact makes it straightforward to extend the framework or trace the origin of any behavior.
+
+## Directory layout
+
+The repository root contains two top-level source directories alongside configuration and generated files:
+
+```
+go-admin/
+├── app/
+│   ├── admin/          # Core admin module (users, roles, menus, etc.)
+│   │   ├── apis/       # Gin handler functions
+│   │   ├── models/     # GORM model structs
+│   │   ├── router/     # Route registration
+│   │   └── service/    # Business logic and DTO definitions
+│   ├── jobs/           # Background / cron jobs
+│   └── other/          # Placeholder for custom modules
+├── cmd/                # Cobra CLI entry points
+├── common/
+│   ├── actions/        # Generic CRUD action helpers and data permission
+│   ├── middleware/     # Gin middleware (JWT, RBAC, DB, logging, CORS)
+│   └── models/         # Shared model base types (ControlBy, ModelTime)
+├── config/
+│   └── settings.yml    # Application configuration
+└── go.mod
+```
+
+<CardGroup cols={2}>
+  <Card title="app/admin/" icon="layout-dashboard">
+    The primary admin module. Contains all system entities: users, roles, menus, departments, dictionaries, posts, config keys, and operation logs.
+  </Card>
+  <Card title="common/" icon="layers">
+    Shared infrastructure — JWT and RBAC middleware, generic CRUD actions, data-scoping helpers, and base model mixins embedded by every entity struct.
+  </Card>
+  <Card title="cmd/" icon="terminal">
+    Cobra commands that serve as the application entry points: `server`, `migrate`, `version`, `config`, and `app`.
+  </Card>
+  <Card title="config/" icon="settings">
+    `settings.yml` drives the entire runtime: server address, JWT secret and timeout, database DSN, logger level, cache backend, and optional per-host multi-database routing.
+  </Card>
+</CardGroup>
+
+## Layer responsibilities
+
+### cmd — CLI entry points
+
+Cobra sub-commands in `cmd/` bootstrap the application. The `server` command initializes the `sdk.Runtime`, registers all middleware via `middleware.InitMiddleware`, then calls `router.InitRouter()` to wire up routes before starting the Gin HTTP server. The `migrate` command runs GORM auto-migrate against the configured database without starting the HTTP server.
+
+### router — route registration
+
+Each resource file in `app/admin/router/` (for example `sys_role.go`) registers its own routes in a package-level `init()` function, appending closures to `routerCheckRole` or `routerNoCheckRole` slices. `InitExamplesRouter` in `router/router.go` iterates those slices to mount every route under `/api/v1`.
+
+Routes that require authentication are wrapped with the JWT middleware and the Casbin `AuthCheckRole()` middleware at registration time:
+
+```go
+r := v1.Group("/role").
+    Use(authMiddleware.MiddlewareFunc()).
+    Use(middleware.AuthCheckRole())
+```
+
+### apis — Gin handler functions
+
+Handler structs in `app/admin/apis/` embed `api.Api` from the SDK. Each handler method follows the same pattern — `MakeContext`, `MakeOrm`, `Bind`, `MakeService` — which injects a request-scoped logger, a database connection resolved from the runtime, and a validated DTO before calling the service layer:
+
+```go
+func (e SysRole) GetPage(c *gin.Context) {
+    s := service.SysRole{}
+    req := dto.SysRoleGetPageReq{}
+    err := e.MakeContext(c).
+        MakeOrm().
+        Bind(&req, binding.Form).
+        MakeService(&s.Service).
+        Errors
+    // ...
+    err = s.GetPage(&req, &list, &count)
+}
+```
+
+### service — business logic
+
+Service structs in `app/admin/service/` embed `service.Service` from the SDK and hold the request-scoped GORM `*gorm.DB`. All database mutations happen here. When a role is created or updated, the service also writes the corresponding Casbin policies into `sys_casbin_rule` via the `*casbin.SyncedEnforcer`:
+
+```go
+_, err = cb.AddNamedPolicies("p", polices)
+```
+
+DTO definitions live in `app/admin/service/dto/` and are used for both request binding and response shaping.
+
+### models — GORM structs
+
+Structs in `app/admin/models/` map directly to database tables. They embed `models.ControlBy` (tracks `create_by` / `update_by` user IDs) and `models.ModelTime` (auto-managed `created_at` / `updated_at` timestamps). Associations are declared as GORM many-to-many tags, for example the role-to-menu join table:
+
+```go
+SysMenu *[]SysMenu `gorm:"many2many:sys_role_menu;foreignKey:RoleId;joinForeignKey:role_id;references:MenuId;joinReferences:menu_id;"`
+```
+
+## Request lifecycle
+
+The following diagram traces a typical authenticated API call from the network to the database and back:
+
+<Steps>
+  <Step title="HTTP request arrives">
+    The Gin engine receives the request. Global middleware registered in `InitMiddleware` runs first: demo guard, database context injection (`WithContextDb`), logger, error handler, cache headers, CORS, and security headers.
+  </Step>
+  <Step title="JWT validation">
+    The route group's `authMiddleware.MiddlewareFunc()` extracts and validates the Bearer token from the `Authorization` header. On success it stores JWT claims — including `rolekey`, `identity`, and `datascope` — in the Gin context.
+  </Step>
+  <Step title="Casbin RBAC check">
+    `middleware.AuthCheckRole()` reads `rolekey` from the JWT claims and calls `e.Enforce(rolekey, path, method)` on the per-host Casbin enforcer. Requests by the `admin` role skip the Casbin check entirely. Denied requests receive a `403` JSON response.
+  </Step>
+  <Step title="Data permission scope injection">
+    `actions.PermissionAction()` queries the user's role and department, builds a `DataPermission` struct, and stores it in the context under the `dataPermission` key.
+  </Step>
+  <Step title="Handler and service execution">
+    The Gin handler binds the request DTO, instantiates a service, and delegates to the service layer. The service applies any data-scope GORM scopes and executes queries against the database.
+  </Step>
+  <Step title="Response">
+    The service returns results to the handler, which serialises them with `e.OK`, `e.PageOK`, or `e.Error` helper methods provided by `api.Api`.
+  </Step>
+</Steps>
+
+## The SDK runtime
+
+go-admin relies on `github.com/go-admin-team/go-admin-core/sdk` as a global service registry. `sdk.Runtime` holds:
+
+- The Gin engine instance
+- Named database connections (one per host in multi-tenant mode)
+- Named Casbin enforcers (one per host)
+- Named middleware functions registered by string key (`JwtToken`, `AuthCheckRole`, `PermissionAction`)
+- Named message queues and cache backends
+
+This allows middleware and handlers to look up the correct database or Casbin enforcer for the current request's `Host` header without any static globals in the application code itself.

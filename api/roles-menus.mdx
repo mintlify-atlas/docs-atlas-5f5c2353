@@ -1,0 +1,881 @@
+---
+title: "REST API: Roles and menu permission endpoints"
+description: "Endpoints for managing roles, assigning menus, controlling API-level permissions, and fetching the menu tree used for role-based access control in go-admin."
+---
+
+go-admin uses a two-layer permission model. **Menu permissions** control which navigation items a role can see in the front-end sidebar. **API permissions** (stored on the `SysMenu` record via associated `SysApi` entries) gate which back-end routes can be called. Role endpoints manage the roles themselves and their menu assignments; menu endpoints manage the menu tree that defines both the UI structure and the API access rules.
+
+All endpoints require `Authorization: Bearer <token>`. Write operations require a role with the corresponding management permission.
+
+**Base URL:** `http://localhost:8000`
+
+---
+
+## Role endpoints
+
+### GET /api/v1/role
+
+Return a paginated list of roles with optional filters.
+
+#### Query parameters
+
+<ParamField query="roleName" type="string">
+  Exact match on the role name.
+</ParamField>
+
+<ParamField query="roleKey" type="string">
+  Exact match on the role code (used in Casbin policy).
+</ParamField>
+
+<ParamField query="status" type="string">
+  Filter by status. `"1"` = disabled, `"2"` = active.
+</ParamField>
+
+<ParamField query="pageSize" type="number" default="10">
+  Records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="code" type="number">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="count" type="number">
+  Total matching records.
+</ResponseField>
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Role object fields">
+    <ResponseField name="roleId" type="number">Unique role ID.</ResponseField>
+    <ResponseField name="roleName" type="string">Human-readable role name.</ResponseField>
+    <ResponseField name="roleKey" type="string">Machine-readable role code used in Casbin policies.</ResponseField>
+    <ResponseField name="roleSort" type="number">Display sort order.</ResponseField>
+    <ResponseField name="status" type="string">Role status (`"1"` disabled, `"2"` active).</ResponseField>
+    <ResponseField name="admin" type="boolean">Whether this role has super-admin access.</ResponseField>
+    <ResponseField name="dataScope" type="string">Data scope setting for row-level access control.</ResponseField>
+    <ResponseField name="flag" type="string">Miscellaneous flag field.</ResponseField>
+    <ResponseField name="remark" type="string">Notes.</ResponseField>
+    <ResponseField name="menuIds" type="number[]">IDs of the menus assigned to this role.</ResponseField>
+    <ResponseField name="deptIds" type="number[]">IDs of departments in scope (when dataScope is custom).</ResponseField>
+    <ResponseField name="sysMenu" type="object[]">Expanded menu objects associated with this role.</ResponseField>
+    <ResponseField name="sysDept" type="object[]">Expanded department objects associated with this role.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/role?pageIndex=1&pageSize=10' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 2,
+      "data": [
+        {
+          "roleId": 1,
+          "roleName": "系统管理员",
+          "roleKey": "admin",
+          "roleSort": 1,
+          "status": "2",
+          "admin": true,
+          "dataScope": "1",
+          "remark": "Super administrator"
+        },
+        {
+          "roleId": 2,
+          "roleName": "editor",
+          "roleKey": "editor",
+          "roleSort": 2,
+          "status": "2",
+          "admin": false,
+          "dataScope": "2",
+          "remark": "Content editor"
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/role/{id}
+
+Fetch a single role by its numeric ID.
+
+#### Path parameters
+
+<ParamField path="id" type="number" required>
+  The role ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/role/2 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "roleId": 2,
+        "roleName": "editor",
+        "roleKey": "editor",
+        "status": "2",
+        "admin": false
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/v1/role
+
+Create a new role and assign menus to it in one request.
+
+#### Request body
+
+<ParamField body="roleName" type="string" required>
+  Human-readable name for the role.
+</ParamField>
+
+<ParamField body="roleKey" type="string" required>
+  Machine-readable code used in Casbin policy entries.
+</ParamField>
+
+<ParamField body="roleSort" type="number">
+  Sort order for display.
+</ParamField>
+
+<ParamField body="status" type="string" default="2">
+  Initial status. `"1"` = disabled, `"2"` = active.
+</ParamField>
+
+<ParamField body="admin" type="boolean">
+  Whether the role grants super-admin access.
+</ParamField>
+
+<ParamField body="dataScope" type="string">
+  Data scope setting (`"1"` = all, `"2"` = custom, etc.).
+</ParamField>
+
+<ParamField body="menuIds" type="number[]">
+  IDs of menus to assign to the role.
+</ParamField>
+
+<ParamField body="deptIds" type="number[]">
+  Department IDs to include in the role's data scope (when `dataScope` is custom).
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Optional notes.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/role \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "roleName": "reporter",
+        "roleKey": "reporter",
+        "roleSort": 5,
+        "status": "2",
+        "admin": false,
+        "dataScope": "2",
+        "menuIds": [1, 2, 10, 11],
+        "remark": "Read-only reporting role"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 5,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/role/{id}
+
+Update a role and its menu assignments.
+
+#### Path parameters
+
+<ParamField path="id" type="number" required>
+  The role ID to update.
+</ParamField>
+
+#### Request body
+
+Accepts the same fields as `POST /api/v1/role`.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/role/5 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "roleName": "reporter",
+        "roleKey": "reporter",
+        "status": "2",
+        "menuIds": [1, 2, 10, 11, 15]
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 5,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /api/v1/role
+
+Delete one or more roles by their IDs. Casbin policies for the deleted roles are removed automatically.
+
+#### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of role IDs to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/role \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [5]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [5],
+      "msg": "删除角色角色 [5] 状态成功！"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/roledatascope
+
+Update the data-scope setting and associated departments for a role without changing its menu assignments.
+
+#### Request body
+
+<ParamField body="roleId" type="number" required>
+  The role ID to update.
+</ParamField>
+
+<ParamField body="dataScope" type="string" required>
+  New data scope value (`"1"` all, `"2"` custom, `"3"` own dept, `"4"` own dept and children, `"5"` self only).
+</ParamField>
+
+<ParamField body="deptIds" type="number[]">
+  Department IDs for the custom scope.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/roledatascope \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "roleId": 2,
+        "dataScope": "2",
+        "deptIds": [3, 5]
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": null,
+      "msg": "操作成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Menu endpoints
+
+Menus are tree-structured records that define both the front-end sidebar navigation and API-level permissions. Each menu can have associated `SysApi` entries that Casbin uses to allow or deny HTTP requests for a role.
+
+<Note>
+  **Menu permissions vs API permissions:** A menu with `menuType = "M"` (directory) or `"C"` (page) controls sidebar visibility. A menu with `menuType = "F"` (button/API rule) controls whether the role may call a specific back-end API route. Both types are assigned to roles through `menuIds` on the role object.
+</Note>
+
+### GET /api/v1/menu
+
+List all menu records. The result is not paginated — all matching records are returned. Supports filtering by title and visibility.
+
+#### Query parameters
+
+<ParamField query="title" type="string">
+  Partial-match filter on the menu display title.
+</ParamField>
+
+<ParamField query="visible" type="number">
+  Filter by visibility (`1` = visible, `0` = hidden).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Menu object fields">
+    <ResponseField name="menuId" type="number">Unique menu ID.</ResponseField>
+    <ResponseField name="menuName" type="string">Internal menu name (component identifier).</ResponseField>
+    <ResponseField name="title" type="string">Displayed label in the sidebar.</ResponseField>
+    <ResponseField name="icon" type="string">Icon identifier for the menu item.</ResponseField>
+    <ResponseField name="path" type="string">Front-end route path.</ResponseField>
+    <ResponseField name="paths" type="string">Slash-separated path of parent IDs (breadcrumb trail).</ResponseField>
+    <ResponseField name="menuType" type="string">`"M"` = directory, `"C"` = page/component, `"F"` = button or API rule.</ResponseField>
+    <ResponseField name="action" type="string">HTTP method for API-type menus (e.g., `"GET"`, `"POST"`).</ResponseField>
+    <ResponseField name="permission" type="string">Casbin permission code (e.g., `"system:user:list"`).</ResponseField>
+    <ResponseField name="parentId" type="number">ID of the parent menu. `0` = root.</ResponseField>
+    <ResponseField name="component" type="string">Front-end Vue component path.</ResponseField>
+    <ResponseField name="sort" type="number">Display sort order.</ResponseField>
+    <ResponseField name="visible" type="string">`"1"` = visible, `"0"` = hidden.</ResponseField>
+    <ResponseField name="isFrame" type="string">`"1"` = external iframe link, `"0"` = normal menu.</ResponseField>
+    <ResponseField name="noCache" type="boolean">Whether to disable front-end component caching.</ResponseField>
+    <ResponseField name="breadcrumb" type="string">Whether to include in breadcrumb navigation.</ResponseField>
+    <ResponseField name="children" type="object[]">Nested child menu objects.</ResponseField>
+    <ResponseField name="sysApi" type="object[]">Associated API rules for permission enforcement.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/menu \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "menuId": 1,
+          "menuName": "System",
+          "title": "System management",
+          "icon": "system",
+          "path": "/system",
+          "menuType": "M",
+          "parentId": 0,
+          "sort": 1,
+          "visible": "1",
+          "isFrame": "0",
+          "children": [
+            {
+              "menuId": 10,
+              "menuName": "User",
+              "title": "User management",
+              "path": "/system/user",
+              "component": "system/user/index",
+              "menuType": "C",
+              "parentId": 1
+            }
+          ]
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/menu/{id}
+
+Retrieve a single menu record by ID.
+
+#### Path parameters
+
+<ParamField path="id" type="number" required>
+  The menu ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/menu/10 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "menuId": 10,
+        "menuName": "User",
+        "title": "User management",
+        "path": "/system/user",
+        "component": "system/user/index",
+        "menuType": "C",
+        "parentId": 1,
+        "sort": 1,
+        "visible": "1"
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/v1/menu
+
+Create a new menu entry.
+
+#### Request body
+
+<ParamField body="menuName" type="string" required>
+  Internal name (component identifier).
+</ParamField>
+
+<ParamField body="title" type="string" required>
+  Sidebar display label.
+</ParamField>
+
+<ParamField body="parentId" type="number" required>
+  Parent menu ID. Use `0` for top-level entries.
+</ParamField>
+
+<ParamField body="menuType" type="string" required>
+  `"M"` = directory, `"C"` = page, `"F"` = button/API rule.
+</ParamField>
+
+<ParamField body="path" type="string">
+  Front-end route path.
+</ParamField>
+
+<ParamField body="component" type="string">
+  Vue component path (for `"C"` type menus).
+</ParamField>
+
+<ParamField body="icon" type="string">
+  Icon name.
+</ParamField>
+
+<ParamField body="sort" type="number">
+  Display sort order.
+</ParamField>
+
+<ParamField body="visible" type="string" default="1">
+  `"1"` = visible, `"0"` = hidden.
+</ParamField>
+
+<ParamField body="isFrame" type="string" default="0">
+  `"1"` = load as iframe, `"0"` = normal.
+</ParamField>
+
+<ParamField body="noCache" type="boolean">
+  Disable Vue keep-alive caching for this page.
+</ParamField>
+
+<ParamField body="breadcrumb" type="string">
+  Whether to show in the breadcrumb.
+</ParamField>
+
+<ParamField body="permission" type="string">
+  Casbin permission string (e.g., `"system:user:add"`).
+</ParamField>
+
+<ParamField body="action" type="string">
+  HTTP verb for API-type menu entries (e.g., `"POST"`).
+</ParamField>
+
+<ParamField body="apis" type="number[]">
+  Array of `SysApi` IDs to associate with this menu for API-level permission enforcement.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/menu \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "menuName": "UserAdd",
+        "title": "Add user",
+        "parentId": 10,
+        "menuType": "F",
+        "permission": "system:user:add",
+        "action": "POST",
+        "sort": 1,
+        "visible": "1"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 55,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/menu/{id}
+
+Update an existing menu entry.
+
+#### Path parameters
+
+<ParamField path="id" type="number" required>
+  The menu ID to update.
+</ParamField>
+
+#### Request body
+
+Accepts the same fields as `POST /api/v1/menu`.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/menu/55 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "menuName": "UserAdd",
+        "title": "Add user (updated)",
+        "parentId": 10,
+        "menuType": "F",
+        "permission": "system:user:add",
+        "sort": 2
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 55,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /api/v1/menu
+
+Delete one or more menu entries by ID.
+
+#### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of menu IDs to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/menu \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [55]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [55],
+      "msg": "删除成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Deleting a parent menu does not automatically delete its children. Remove child entries first to avoid orphaned records.
+</Warning>
+
+---
+
+## Tree-select endpoints
+
+### GET /api/v1/roleMenuTreeselect/{roleId}
+
+Return the full menu tree alongside the set of menu IDs already assigned to the specified role. Used by the admin UI to pre-check boxes when editing a role's menu permissions.
+
+#### Path parameters
+
+<ParamField path="roleId" type="number" required>
+  The role ID. Pass `0` to get the full tree with no pre-selected items.
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="menus" type="object[]">
+  Full tree of `MenuLabel` objects (`id`, `label`, `children`).
+</ResponseField>
+
+<ResponseField name="checkedKeys" type="number[]">
+  Menu IDs currently assigned to the role.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/roleMenuTreeselect/2 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "menus": [
+          {
+            "id": 1,
+            "label": "System management",
+            "children": [
+              { "id": 10, "label": "User management" },
+              { "id": 20, "label": "Role management" }
+            ]
+          }
+        ],
+        "checkedKeys": [1, 10]
+      },
+      "msg": "获取成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/menurole
+
+Return the menu tree filtered to the menus accessible to the currently authenticated user's role. Used by the front-end to build the sidebar navigation.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/menurole \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "menuId": 1,
+          "title": "System management",
+          "path": "/system",
+          "icon": "system",
+          "menuType": "M",
+          "children": [
+            {
+              "menuId": 10,
+              "title": "User management",
+              "path": "/system/user",
+              "component": "system/user/index",
+              "menuType": "C"
+            }
+          ]
+        }
+      ],
+      "msg": ""
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## API registry (sys-api)
+
+The API registry is a catalogue of all registered HTTP routes in go-admin. Each record links an HTTP method + path to a human-readable title and an optional handler name. Menu entries reference API registry records to enforce path-level access control via Casbin. Administrators can view and update registry entries but cannot create them manually — records are seeded by the `migrate` command and updated when new routes are registered.
+
+### GET /api/v1/sys-api
+
+Return a paginated list of registered API entries.
+
+**Query parameters**
+
+<ParamField query="title" type="string">
+  Partial-match filter on the API title.
+</ParamField>
+
+<ParamField query="path" type="string">
+  Partial-match filter on the API path.
+</ParamField>
+
+<ParamField query="action" type="string">
+  Exact filter on the HTTP method (e.g. `GET`, `POST`, `PUT`, `DELETE`).
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="10">
+  Records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="integer" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="SysApi object fields">
+    <ResponseField name="id" type="integer">Unique API record ID.</ResponseField>
+    <ResponseField name="handle" type="string">Handler function name, e.g. `apis.SysUser.GetPage`.</ResponseField>
+    <ResponseField name="title" type="string">Human-readable description of the endpoint.</ResponseField>
+    <ResponseField name="path" type="string">URL path pattern, e.g. `/api/v1/sys-user`.</ResponseField>
+    <ResponseField name="action" type="string">HTTP method, e.g. `GET`.</ResponseField>
+    <ResponseField name="type" type="string">Category or grouping label.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/sys-api?action=GET&pageIndex=1&pageSize=20' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 42,
+      "data": [
+        {
+          "id": 1,
+          "handle": "apis.SysUser.GetPage",
+          "title": "User list",
+          "path": "/api/v1/sys-user",
+          "action": "GET",
+          "type": "sys"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/sys-api/:id
+
+Return a single API registry entry by its ID.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/sys-api/1 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/sys-api/:id
+
+Update the title, path, action, or type of an existing API registry entry.
+
+**Request body**
+
+<ParamField body="title" type="string">
+  Human-readable description.
+</ParamField>
+
+<ParamField body="path" type="string">
+  URL path of the endpoint.
+</ParamField>
+
+<ParamField body="action" type="string">
+  HTTP method.
+</ParamField>
+
+<ParamField body="handle" type="string">
+  Handler function name.
+</ParamField>
+
+<ParamField body="type" type="string">
+  Category label.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/sys-api/1 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"title": "List system users", "path": "/api/v1/sys-user", "action": "GET"}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    { "code": 200, "data": 1, "msg": "更新成功" }
+    ```
+  </Tab>
+</Tabs>

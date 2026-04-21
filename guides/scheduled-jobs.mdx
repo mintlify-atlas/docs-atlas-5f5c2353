@@ -1,0 +1,184 @@
+---
+title: "Manage background jobs with cron scheduling in go-admin"
+description: "Create, register, and monitor cron-scheduled background jobs in go-admin using the built-in job scheduler backed by the robfig/cron library."
+---
+
+go-admin includes a built-in cron job scheduler that lets you define recurring background tasks, manage them from the admin UI, and register custom Go handler functions that the scheduler invokes at the configured intervals. The scheduler uses the `robfig/cron/v3` library and supports second-level precision in cron expressions.
+
+## Job types
+
+The scheduler supports two types of jobs, selected when creating or editing a job in the admin UI:
+
+| Type | Value | Description |
+|------|-------|-------------|
+| HTTP | `1` | Makes an HTTP GET request to a URL. Retries up to 3 times on failure with increasing back-off. |
+| Exec | `2` | Calls a registered Go handler function looked up by name from the `jobList` map. |
+
+## Job model fields
+
+Each job record in the `sys_job` table contains:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jobName` | string | Human-readable display name |
+| `jobGroup` | string | Group label for organizing jobs |
+| `jobType` | int | `1` = HTTP, `2` = Exec |
+| `cronExpression` | string | Cron expression including seconds field |
+| `invokeTarget` | string | URL (HTTP jobs) or handler key (Exec jobs) |
+| `args` | string | Optional argument string passed to the handler |
+| `status` | int | `1` = disabled, `2` = enabled |
+| `entryId` | int | Runtime entry ID assigned by the cron library |
+
+## Cron expression syntax
+
+go-admin uses a **6-field** cron expression that includes a seconds field as the first position:
+
+```
+┌─────────── second       (0–59)
+│ ┌───────── minute       (0–59)
+│ │ ┌─────── hour         (0–23)
+│ │ │ ┌───── day of month (1–31)
+│ │ │ │ ┌─── month        (1–12)
+│ │ │ │ │ ┌─ day of week  (0–6, Sunday = 0)
+│ │ │ │ │ │
+* * * * * *
+```
+
+Common examples:
+
+| Expression | Meaning |
+|-----------|---------|
+| `0 * * * * *` | Every minute, on the minute |
+| `0 0 * * * *` | Every hour, at :00:00 |
+| `0 0 9 * * *` | Daily at 09:00:00 |
+| `0 0 9 * * 1` | Every Monday at 09:00:00 |
+| `0 0/30 9-17 * * *` | Every 30 minutes between 09:00 and 17:00 |
+| `0 0 0 1 * *` | First day of every month at midnight |
+
+<Note>
+The `queue.memory.poolSize` setting in `settings.yml` controls the in-memory message queue buffer used by the operation log middleware. Set it large enough to avoid dropped log messages under high traffic. It defaults to `100` and is unrelated to the number of jobs, but shares the same queue infrastructure.
+
+```yaml
+settings:
+  queue:
+    memory:
+      poolSize: 100
+```
+</Note>
+
+## Creating a job in the admin UI
+
+<Steps>
+  <Step title="Navigate to Job Management">
+    Go to **System Monitor → Scheduled Jobs** in the admin sidebar to open the job list.
+  </Step>
+
+  <Step title="Click Add">
+    Click the **Add** button to open the job creation form.
+  </Step>
+
+  <Step title="Fill in the job details">
+    - **Job name** — a descriptive name for the job.
+    - **Job group** — an optional grouping label.
+    - **Job type** — select **HTTP** to call a URL, or **Exec** to run a registered Go handler.
+    - **Cron expression** — enter a 6-field cron expression (seconds included).
+    - **Invoke target** — for HTTP jobs, enter the full URL; for Exec jobs, enter the handler key registered in `InitJob()`.
+    - **Args** — optional argument string passed to Exec job handlers.
+    - **Status** — set to **Enabled** for the job to start automatically on server startup.
+  </Step>
+
+  <Step title="Save the job">
+    Click **Save**. The job is persisted to the `sys_job` table. If the server is running and the job is enabled, it is added to the live scheduler immediately via the Start API.
+  </Step>
+</Steps>
+
+## Registering a custom Go handler
+
+Exec-type jobs call Go functions registered in the `jobList` map inside `app/jobs/examples.go`. Every handler must implement the `JobExec` interface:
+
+```go
+// JobExec interface — implement Exec to create a handler
+type JobExec interface {
+    Exec(arg interface{}) error
+}
+```
+
+To add a new handler:
+
+**1. Define your struct and implement `Exec`:**
+
+```go
+// app/jobs/examples.go
+
+type MyReportJob struct{}
+
+func (j MyReportJob) Exec(arg interface{}) error {
+    // arg is the string value of SysJob.Args
+    switch v := arg.(type) {
+    case string:
+        // use v if arguments were configured
+        _ = v
+    }
+    // your business logic here
+    return nil
+}
+```
+
+**2. Register it in `InitJob`:**
+
+```go
+func InitJob() {
+    jobList = map[string]JobExec{
+        "ExamplesOne":  ExamplesOne{},
+        "MyReportJob":  MyReportJob{},  // add your handler here
+        // ...
+    }
+}
+```
+
+**3. Set the invoke target in the admin UI:**
+
+When creating the job, set **Invoke Target** to the exact map key — in this example `MyReportJob`.
+
+<Warning>
+The map key in `InitJob()` must match the **Invoke Target** field in the job record exactly. A mismatch causes the scheduler to log `[Job] ExecJob Run job nil` and skip execution silently.
+</Warning>
+
+## Example handler from the codebase
+
+The built-in `ExamplesOne` handler (in `app/jobs/examples.go`) demonstrates the expected pattern:
+
+```go
+type ExamplesOne struct{}
+
+func (t ExamplesOne) Exec(arg interface{}) error {
+    str := time.Now().Format("2006-01-02 15:04:05") + " [INFO] JobCore ExamplesOne exec success"
+    switch arg.(type) {
+    case string:
+        if arg.(string) != "" {
+            fmt.Println("string", arg.(string))
+            fmt.Println(str, arg.(string))
+        } else {
+            fmt.Println("arg is nil")
+            fmt.Println(str, "arg is nil")
+        }
+    }
+    return nil
+}
+```
+
+## Managing running jobs
+
+The admin UI job list exposes three runtime operations for each job:
+
+| Action | Description |
+|--------|-------------|
+| **Start** | Adds the job to the live cron scheduler and records the entry ID. The job status must be **Enabled** (`status = 2`). |
+| **Stop** | Removes the job from the live scheduler by entry ID. The `entry_id` is reset to `0` in the database. |
+| **Run once** | Triggers a single immediate execution outside the cron schedule. |
+
+These operations call the `StartJobForService` and `RemoveJobForService` API endpoints, which use `sdk.Runtime.GetCrontabKey` to locate the correct scheduler instance for the current host.
+
+## Startup behaviour
+
+On server startup, `jobs.Setup()` is called for each configured database. It loads all jobs with `status = 2` (enabled) from `sys_job`, clears any stale `entry_id` values, registers each job with the scheduler, and starts the cron loop. HTTP jobs and Exec jobs are registered as `HttpJob` and `ExecJob` structs respectively, both implementing the `cron.Job` interface via their `Run()` method.

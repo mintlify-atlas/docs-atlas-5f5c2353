@@ -1,0 +1,252 @@
+---
+title: "Production deployment checklist for go-admin"
+description: "Harden go-admin for production: enable prod mode, rotate JWT secrets, cross-compile, configure systemd, set up Nginx with SSL, and manage logs."
+---
+
+Deploying go-admin to production involves more than copying a binary. You need to harden the configuration, compile for the target platform, set up process supervision, terminate TLS at a reverse proxy, and arrange log rotation. This page walks through each of those steps using the actual scripts, configuration files, and build targets from the repository.
+
+## 1. Set production mode in settings.yml
+
+The `mode` key under `application` controls several runtime behaviors. Setting it to `prod` disables the Swagger UI at `/swagger/*`, the form-generator static files at `/form-generator/*`, and the debug home page at `/`.
+
+```yaml
+settings:
+  application:
+    mode: prod   # dev | test | prod
+    host: 0.0.0.0
+    name: go-admin
+    port: 8000
+    readtimeout: 1
+    writertimeout: 2
+    enabledp: false
+```
+
+The three valid values are:
+- `dev` — enables Swagger UI, form-generator, and the debug home page.
+- `test` — testing environment; same effect as `dev` for most flags.
+- `prod` — disables all developer-facing routes and static file handlers.
+
+<Warning>
+  Change `jwt.secret` from the default value `"go-admin"` before going live. A predictable secret lets any party forge JWT tokens that authenticate as any user, including `admin`. Use a long, randomly-generated string.
+
+  ```yaml
+  jwt:
+    secret: <replace-with-a-strong-random-value>
+    timeout: 3600
+  ```
+</Warning>
+
+## 2. Cross-compile for Linux
+
+If you develop on macOS or Windows, compile a Linux/amd64 binary before deploying:
+
+```bash
+env GOOS=linux GOARCH=amd64 go build main.go
+```
+
+For a stripped, statically-linked binary (recommended for Docker and minimal server environments):
+
+```bash
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -a -installsuffix "" -o go-admin .
+```
+
+The `Makefile` `build` target runs this automatically for the current platform:
+
+```bash
+make build
+```
+
+For building with SQLite support (CGO required):
+
+```bash
+go build -tags sqlite3 -ldflags="-w -s" -a -installsuffix -o go-admin .
+make build-sqlite
+```
+
+## 3. Systemd service unit
+
+Create a service unit file so that systemd manages the go-admin process, restarts it on failure, and starts it on boot.
+
+```bash
+sudo nano /etc/systemd/system/go-admin.service
+```
+
+```ini
+[Unit]
+Description=go-admin API server
+After=network.target
+
+[Service]
+Type=simple
+User=go-admin
+Group=go-admin
+WorkingDirectory=/opt/go-admin
+ExecStart=/opt/go-admin/go-admin server -c /opt/go-admin/config/settings.yml
+ExecStop=/bin/kill -s TERM $MAINPID
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:/opt/go-admin/temp/logs/access.log
+StandardError=append:/opt/go-admin/temp/logs/error.log
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable and start the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable go-admin
+sudo systemctl start go-admin
+sudo systemctl status go-admin
+```
+
+Create the `go-admin` system user and set ownership before starting:
+
+```bash
+sudo useradd --system --no-create-home --shell /bin/false go-admin
+sudo chown -R go-admin:go-admin /opt/go-admin
+```
+
+## 4. Process management scripts
+
+The repository includes two shell scripts for non-systemd deployments.
+
+**`restart.sh`** — rebuilds the binary, kills the running process, and relaunches in the background:
+
+```bash
+#!/bin/bash
+echo "go build"
+go mod tidy
+go build -o go-admin main.go
+chmod +x ./go-admin
+echo "kill go-admin service"
+killall go-admin # kill go-admin service
+nohup ./go-admin server -c=config/settings.dev.yml >> access.log 2>&1 & #后台启动服务将日志写入access.log文件
+echo "run go-admin success"
+ps -aux | grep go-admin
+```
+
+**`stop.sh`** — terminates all running go-admin processes:
+
+```bash
+#!/bin/bash
+killall go-admin # kill go-admin service
+echo "stop go-admin success"
+ps -aux | grep go-admin
+```
+
+<Note>
+  For production, prefer the systemd unit file above over these scripts. The scripts do not handle restarts on failure or integration with the init system.
+</Note>
+
+## 5. Nginx reverse proxy
+
+Run Nginx in front of go-admin to handle SSL/TLS termination, HTTP/2, connection queuing, and static asset caching. The API server itself only needs to listen on `127.0.0.1:8000`.
+
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com;
+    # Redirect all HTTP to HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name yourdomain.com;
+
+    # SSL/TLS certificates (e.g. from Let's Encrypt)
+    ssl_certificate     /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    # Proxy all requests to the go-admin API
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+}
+```
+
+Reload Nginx after updating the configuration:
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+<Tip>
+  When go-admin runs behind a reverse proxy, make sure Nginx forwards the `X-Forwarded-For` and `X-Forwarded-Proto` headers as shown above. The Gin framework (which go-admin is built on) uses these headers to determine the real client IP and protocol for access logs and rate limiting. If your Nginx host is not in Gin's trusted proxy list, forwarded headers are ignored.
+</Tip>
+
+## 6. Log rotation with logrotate
+
+go-admin writes logs to the path set in `settings.yml` under `logger.path` (default: `temp/logs`). Create a logrotate configuration to prevent unbounded log growth.
+
+```bash
+sudo nano /etc/logrotate.d/go-admin
+```
+
+```
+/opt/go-admin/temp/logs/*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+
+`copytruncate` truncates the log file in place rather than moving it, which avoids needing to send a signal to the process. Test the configuration with:
+
+```bash
+sudo logrotate -d /etc/logrotate.d/go-admin
+```
+
+## Production settings.yml reference
+
+A minimal production-ready `settings.yml` combining the options from the sections above:
+
+```yaml
+settings:
+  application:
+    mode: prod
+    host: 0.0.0.0
+    name: go-admin
+    port: 8000
+    readtimeout: 1
+    writertimeout: 2
+    enabledp: false
+  logger:
+    path: temp/logs
+    stdout: ''
+    level: info
+    enableddb: false
+  jwt:
+    secret: <your-strong-random-secret>
+    timeout: 3600
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+  gen:
+    dbname: dbname
+    frontpath: ../go-admin-ui/src
+  cache:
+    memory: ''
+  queue:
+    memory:
+      poolSize: 100
+```

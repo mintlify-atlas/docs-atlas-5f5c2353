@@ -1,97 +1,62 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "go-admin: Go-powered admin framework"
+description: "go-admin is a full-featured backend admin scaffold built on Gin, GORM, Casbin, and JWT. Launch a production-ready permission management system in minutes."
 ---
 
-## Setting up
+go-admin is an open-source backend admin framework that combines Gin (HTTP), GORM (ORM), Casbin (RBAC), and JWT authentication into a ready-to-run scaffold. Connect your database, run the migration command, and you have a working admin API with user management, role-based access control, code generation, scheduled jobs, and more — all in under 3 minutes.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, configure your database, and run your first go-admin server in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Configuration" icon="sliders" href="/configuration">
+    Learn every setting in settings.yml — database, JWT, logging, cache, and more.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="RBAC & Permissions" icon="shield-halved" href="/concepts/rbac-permissions">
+    Understand how Casbin RBAC controls access to menus, APIs, and data.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="API Reference" icon="code" href="/api/auth">
+    Explore every REST endpoint: auth, users, roles, menus, departments, and tools.
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Key features
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Code generator" icon="wand-magic-sparkles" href="/guides/code-generator">
+    Generate full CRUD backend and frontend from any database table — zero manual code.
+  </Card>
+  <Card title="Form builder" icon="table-columns" href="/guides/form-builder">
+    Drag-and-drop form designer that produces frontend page layouts visually.
+  </Card>
+  <Card title="Scheduled jobs" icon="clock" href="/guides/scheduled-jobs">
+    Define and manage cron-based background jobs through the admin interface.
+  </Card>
+  <Card title="File storage" icon="cloud-arrow-up" href="/guides/file-storage">
+    Upload files to local disk, Alibaba OSS, Qiniu, or Huawei OBS with one config switch.
+  </Card>
+  <Card title="Multi-tenancy" icon="building" href="/concepts/multi-tenancy">
+    Isolate data and configuration across multiple tenants in a single deployment.
+  </Card>
+  <Card title="Deployment" icon="server" href="/deployment/docker">
+    Run go-admin with Docker Compose or deploy to bare metal with a single binary.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Get started in 3 steps
 
-## Need inspiration?
+<Steps>
+  <Step title="Clone and configure">
+    Clone the repository and edit `config/settings.yml` with your database credentials.
+  </Step>
+  <Step title="Initialize the database">
+    Run `./go-admin migrate -c config/settings.yml` to create all tables and seed data.
+  </Step>
+  <Step title="Start the server">
+    Run `./go-admin server -c config/settings.yml`. The API is live at `http://localhost:8000`.
+  </Step>
+</Steps>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Note>
+  go-admin requires Go 1.18+. The default configuration uses SQLite so you can try it immediately without installing a separate database server.
+</Note>

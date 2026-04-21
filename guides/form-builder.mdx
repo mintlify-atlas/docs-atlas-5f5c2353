@@ -1,0 +1,108 @@
+---
+title: "Build dynamic go-admin forms with drag-and-drop UI"
+description: "Use go-admin's built-in form builder to design admin form layouts visually and export the JSON schema to embed in your Vue pages without writing templates."
+---
+
+The form builder is a drag-and-drop layout editor bundled with go-admin that lets you compose admin form pages without writing Vue template code by hand. You arrange components on a canvas, configure their properties in a sidebar panel, and export the resulting JSON configuration that your Vue pages can consume.
+
+## Accessing the form builder
+
+The form builder is served as a static web application from the `static/form-generator/` directory in the go-admin project. It is accessible at `/form-gen.html` in the browser when the server is running.
+
+<Warning>
+The form builder route is only registered when the application mode is **not** `prod`. In production mode (`settings.application.mode: prod`) the static form generator is not served, preventing accidental use of a development-only tool in live environments.
+</Warning>
+
+Navigate to the form builder by opening the **Form Builder** entry in the **System Tools** section of the admin sidebar, or by visiting `/form-gen.html` directly.
+
+## Available components
+
+The form builder provides a palette of standard HTML and Element UI form components you can drag onto the canvas:
+
+<CardGroup cols={2}>
+  <Card title="Input components" icon="keyboard">
+    Single-line input, multi-line textarea, number input, and password input fields.
+  </Card>
+  <Card title="Selection components" icon="list">
+    Select dropdown, radio group, checkbox group, and switch toggle.
+  </Card>
+  <Card title="Date and time" icon="calendar">
+    Date picker, time picker, and datetime picker with format configuration.
+  </Card>
+  <Card title="Layout components" icon="layout">
+    Grid row/column containers for arranging multiple fields side by side.
+  </Card>
+</CardGroup>
+
+Each component exposes configurable properties in the right-hand panel:
+
+- **Field label** — the text displayed next to the input.
+- **Field key** — the `v-model` binding name used in the generated JSON.
+- **Placeholder** — hint text shown inside the input.
+- **Required** — marks the field as mandatory, adding a validation rule.
+- **Default value** — pre-populated value when the form loads.
+- **Width** — component width as a percentage or pixel value.
+
+## Designing a form
+
+<Steps>
+  <Step title="Open the form builder">
+    Click **System Tools → Form Builder** in the admin sidebar. The editor opens with an empty canvas in the center, a component palette on the left, and a property panel on the right.
+  </Step>
+
+  <Step title="Add components to the canvas">
+    Drag a component from the left palette and drop it onto the canvas. Components stack vertically by default. Drag them to reorder.
+  </Step>
+
+  <Step title="Configure component properties">
+    Click any component on the canvas to select it. The right panel shows all configurable properties for that component. Edit the label, key, placeholder, validation rules, and other settings.
+  </Step>
+
+  <Step title="Arrange with layout containers">
+    Drag a **Grid layout** component onto the canvas first, then drag field components into its columns to place multiple fields on the same row.
+  </Step>
+
+  <Step title="Preview the form">
+    Click the **Preview** button in the toolbar to render the form as it will appear to end users. This opens a modal with the live form.
+  </Step>
+
+  <Step title="Export the JSON configuration">
+    Click **Generate Code** or **Export JSON** in the toolbar. The builder outputs a JSON object that describes the complete form layout and field configurations. Copy this JSON to embed in your Vue page.
+  </Step>
+</Steps>
+
+## Using the exported JSON
+
+The form builder exports a JSON schema that the `fm-generate-form` Vue component (from the `form-generator` library bundled with `go-admin-ui`) uses to render the form at runtime.
+
+```vue
+<template>
+  <fm-generate-form
+    :data="formData"
+    :value="formModel"
+    ref="generateForm"
+  />
+</template>
+
+<script>
+export default {
+  data() {
+    return {
+      // Paste the exported JSON from the form builder here
+      formData: { ... },
+      formModel: {}
+    }
+  }
+}
+</script>
+```
+
+To submit the form, call `this.$refs.generateForm.getData()` which validates all fields and returns a promise that resolves with the field values.
+
+## Static asset location
+
+The form builder application files are located at `static/form-generator/` in the go-admin backend project. The Gin router serves this directory as a static file group. If you need to update or replace the form builder, replace the files in that directory.
+
+<Note>
+The form builder is a client-side tool that runs entirely in the browser. It does not persist form configurations to the database — you are responsible for saving the exported JSON in your application code or a suitable storage location.
+</Note>

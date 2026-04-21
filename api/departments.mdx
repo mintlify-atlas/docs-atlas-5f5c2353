@@ -1,0 +1,650 @@
+---
+title: "REST API: Department and organization endpoints"
+description: "Endpoints for managing the department tree, positions/posts, and department-scoped data permissions used by go-admin's RBAC layer."
+---
+
+go-admin organises users into a department hierarchy. Departments form a tree where each node has an optional parent. This structure feeds into the data-permission system: when a role's `dataScope` is set to `"2"` (custom), only records belonging to the selected departments are returned for users in that role. The post (position) resource represents job titles and is a flat list independent of the department tree.
+
+All endpoints require `Authorization: Bearer <token>`. Write operations require a role with department-management permission.
+
+**Base URL:** `http://localhost:8000`
+
+---
+
+## Department endpoints
+
+### GET /api/v1/dept
+
+List departments. The response is a tree structure where top-level departments have `parentId = 0` and their children are nested in the `children` field. Supports filtering by common fields.
+
+#### Query parameters
+
+<ParamField query="deptId" type="number">
+  Exact filter on the department ID.
+</ParamField>
+
+<ParamField query="parentId" type="number">
+  Exact filter on the parent department ID.
+</ParamField>
+
+<ParamField query="deptName" type="string">
+  Exact filter on the department name.
+</ParamField>
+
+<ParamField query="deptPath" type="string">
+  Exact filter on the stored path string.
+</ParamField>
+
+<ParamField query="leader" type="string">
+  Exact filter on the department leader name.
+</ParamField>
+
+<ParamField query="phone" type="string">
+  Exact filter on the department phone.
+</ParamField>
+
+<ParamField query="email" type="string">
+  Exact filter on the department email.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Exact filter on the status field (`"1"` = active, `"2"` = disabled).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Department object fields">
+    <ResponseField name="deptId" type="number">Unique department ID.</ResponseField>
+    <ResponseField name="parentId" type="number">Parent department ID. `0` = top-level.</ResponseField>
+    <ResponseField name="deptPath" type="string">Slash-separated path of ancestor IDs used for subtree queries.</ResponseField>
+    <ResponseField name="deptName" type="string">Department display name.</ResponseField>
+    <ResponseField name="sort" type="number">Display sort order.</ResponseField>
+    <ResponseField name="leader" type="string">Name of the department leader.</ResponseField>
+    <ResponseField name="phone" type="string">Department contact phone.</ResponseField>
+    <ResponseField name="email" type="string">Department contact email.</ResponseField>
+    <ResponseField name="status" type="number">Department status (`1` = active).</ResponseField>
+    <ResponseField name="children" type="object[]">Nested child department objects (same structure, recursive).</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/dept \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "deptId": 1,
+          "parentId": 0,
+          "deptName": "Headquarters",
+          "deptPath": "/1",
+          "sort": 1,
+          "leader": "Jane Doe",
+          "phone": "02100000000",
+          "email": "hq@example.com",
+          "status": 1,
+          "children": [
+            {
+              "deptId": 5,
+              "parentId": 1,
+              "deptName": "Engineering",
+              "deptPath": "/1/5",
+              "sort": 1,
+              "leader": "Bob Li",
+              "status": 1,
+              "children": []
+            }
+          ]
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/dept/{deptId}
+
+Retrieve a single department by its ID.
+
+#### Path parameters
+
+<ParamField path="deptId" type="number" required>
+  The department ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/dept/5 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "deptId": 5,
+        "parentId": 1,
+        "deptName": "Engineering",
+        "deptPath": "/1/5",
+        "sort": 1,
+        "leader": "Bob Li",
+        "phone": "02100000001",
+        "email": "eng@example.com",
+        "status": 1
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/v1/dept
+
+Create a new department.
+
+#### Request body
+
+<ParamField body="deptName" type="string" required>
+  Name of the new department.
+</ParamField>
+
+<ParamField body="leader" type="string" required>
+  Name of the department leader.
+</ParamField>
+
+<ParamField body="status" type="number" required>
+  Department status. Must be greater than `0`. Use `1` for active.
+</ParamField>
+
+<ParamField body="parentId" type="number">
+  ID of the parent department. Omit or set to `0` for a top-level department.
+</ParamField>
+
+<ParamField body="deptPath" type="string">
+  Full ancestor path string (e.g., `"/1/5/"`). Typically computed by the client from the chosen parent.
+</ParamField>
+
+<ParamField body="sort" type="number">
+  Display sort order.
+</ParamField>
+
+<ParamField body="phone" type="string">
+  Contact phone number.
+</ParamField>
+
+<ParamField body="email" type="string">
+  Contact email address.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/dept \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "parentId": 5,
+        "deptName": "Frontend",
+        "deptPath": "/1/5/",
+        "sort": 1,
+        "leader": "Alice Zhang",
+        "phone": "02100000002",
+        "email": "frontend@example.com",
+        "status": 1
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 8,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/dept/{deptId}
+
+Update an existing department.
+
+#### Path parameters
+
+<ParamField path="deptId" type="number" required>
+  The department ID to update.
+</ParamField>
+
+#### Request body
+
+Accepts the same fields as `POST /api/v1/dept`.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/dept/8 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "parentId": 5,
+        "deptName": "Frontend Team",
+        "deptPath": "/1/5/",
+        "sort": 2,
+        "leader": "Alice Zhang",
+        "status": 1
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 8,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /api/v1/dept
+
+Delete one or more departments by their IDs.
+
+#### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of department IDs to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/dept \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [8]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [8],
+      "msg": "删除成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Deleting a department that still has users or child departments assigned will cause data integrity issues. Reassign or delete dependent records first.
+</Warning>
+
+---
+
+### GET /api/v1/deptTree
+
+Return the full department tree as a flat list of `DeptLabel` objects suitable for tree-select components. No filters are applied.
+
+#### Response fields
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="DeptLabel fields">
+    <ResponseField name="id" type="number">Department ID.</ResponseField>
+    <ResponseField name="label" type="string">Department name.</ResponseField>
+    <ResponseField name="children" type="object[]">Nested child `DeptLabel` entries.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/deptTree \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "id": 1,
+          "label": "Headquarters",
+          "children": [
+            {
+              "id": 5,
+              "label": "Engineering",
+              "children": [
+                { "id": 8, "label": "Frontend Team", "children": [] }
+              ]
+            }
+          ]
+        }
+      ],
+      "msg": ""
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/roleDeptTreeselect/{roleId}
+
+Return the department tree along with the department IDs currently selected for a given role's custom data scope. Used by the admin UI to pre-populate checkboxes when configuring a role's data permissions.
+
+#### Path parameters
+
+<ParamField path="roleId" type="number" required>
+  The role ID. Pass `0` to get the tree with no pre-selected items.
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="depts" type="object[]">
+  Full `DeptLabel` tree.
+</ResponseField>
+
+<ResponseField name="checkedKeys" type="number[]">
+  Department IDs currently assigned to the role's data scope.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/roleDeptTreeselect/2 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "depts": [
+          {
+            "id": 1,
+            "label": "Headquarters",
+            "children": [
+              { "id": 5, "label": "Engineering", "children": [] }
+            ]
+          }
+        ],
+        "checkedKeys": [5]
+      },
+      "msg": ""
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Department tree selections here feed directly into `PUT /api/v1/roledatascope`. After selecting departments in the UI, submit the updated `deptIds` array via the role data-scope endpoint to persist the change.
+</Note>
+
+---
+
+## Post (position) endpoints
+
+Posts represent job titles or positions. Each user can be assigned one post. Posts are a flat resource — they do not form a tree.
+
+### GET /api/v1/post
+
+Return a paginated list of posts with optional filters.
+
+#### Query parameters
+
+<ParamField query="postName" type="string">
+  Partial-match filter on the post name.
+</ParamField>
+
+<ParamField query="postCode" type="string">
+  Partial-match filter on the post code.
+</ParamField>
+
+<ParamField query="postId" type="number">
+  Exact filter on the post ID.
+</ParamField>
+
+<ParamField query="status" type="number">
+  Exact filter on the post status.
+</ParamField>
+
+<ParamField query="pageSize" type="number" default="10">
+  Records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Post object fields">
+    <ResponseField name="postId" type="number">Unique post ID.</ResponseField>
+    <ResponseField name="postName" type="string">Post display name (e.g., "Developer").</ResponseField>
+    <ResponseField name="postCode" type="string">Short code for the post (e.g., `"dev"`).</ResponseField>
+    <ResponseField name="sort" type="number">Display sort order.</ResponseField>
+    <ResponseField name="status" type="number">Status (`1` = active).</ResponseField>
+    <ResponseField name="remark" type="string">Description.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/post?pageIndex=1&pageSize=20' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 3,
+      "data": [
+        { "postId": 1, "postName": "Developer", "postCode": "dev", "sort": 1, "status": 1 },
+        { "postId": 2, "postName": "Designer", "postCode": "ux", "sort": 2, "status": 1 },
+        { "postId": 3, "postName": "Manager", "postCode": "mgr", "sort": 3, "status": 1 }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/post/{postId}
+
+Retrieve a single post by its ID.
+
+#### Path parameters
+
+<ParamField path="postId" type="number" required>
+  The post ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/post/1 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "postId": 1,
+        "postName": "Developer",
+        "postCode": "dev",
+        "sort": 1,
+        "status": 1,
+        "remark": "Software developer"
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/v1/post
+
+Create a new post.
+
+#### Request body
+
+<ParamField body="postName" type="string" required>
+  Display name for the position.
+</ParamField>
+
+<ParamField body="postCode" type="string" required>
+  Short machine-readable code.
+</ParamField>
+
+<ParamField body="sort" type="number">
+  Display sort order.
+</ParamField>
+
+<ParamField body="status" type="number">
+  Post status (`1` = active).
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Optional description.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/post \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "postName": "QA Engineer",
+        "postCode": "qa",
+        "sort": 4,
+        "status": 1,
+        "remark": "Quality assurance"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 4,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/post/{id}
+
+Update an existing post.
+
+#### Path parameters
+
+<ParamField path="id" type="number" required>
+  The post ID to update.
+</ParamField>
+
+#### Request body
+
+Accepts the same fields as `POST /api/v1/post`.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/post/4 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "postName": "Senior QA Engineer",
+        "postCode": "qa-sr",
+        "sort": 4,
+        "status": 1
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 4,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /api/v1/post
+
+Delete one or more posts by their IDs.
+
+#### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of post IDs to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/post \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [4]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [4],
+      "msg": "删除成功"
+    }
+    ```
+  </Tab>
+</Tabs>

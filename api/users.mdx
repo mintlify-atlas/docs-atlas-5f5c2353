@@ -1,0 +1,587 @@
+---
+title: "REST API: User management endpoints"
+description: "Endpoints for listing, creating, updating, and deleting system users in go-admin, including profile access, avatar upload, and password management."
+---
+
+The user management endpoints let administrators manage system accounts. All endpoints require a valid JWT issued by `POST /api/v1/login`. Most write operations additionally require a role that carries user-management permissions enforced by go-admin's RBAC middleware. The data permission layer (`PermissionAction`) also scopes results to departments the caller is authorised to access.
+
+**Base URL:** `http://localhost:8000`
+
+<Note>
+  Every request must include `Authorization: Bearer <token>`. Roles without user-management permission receive `403 Forbidden`.
+</Note>
+
+---
+
+## GET /api/v1/sys-user
+
+Return a paginated list of system users. Supports filtering by several fields via query parameters.
+
+### Query parameters
+
+<ParamField query="username" type="string">
+  Partial-match filter on the username field.
+</ParamField>
+
+<ParamField query="nickName" type="string">
+  Partial-match filter on the display name.
+</ParamField>
+
+<ParamField query="phone" type="string">
+  Partial-match filter on the phone number.
+</ParamField>
+
+<ParamField query="email" type="string">
+  Partial-match filter on the email address.
+</ParamField>
+
+<ParamField query="roleId" type="string">
+  Exact filter on the role ID.
+</ParamField>
+
+<ParamField query="sex" type="string">
+  Exact filter on the sex field.
+</ParamField>
+
+<ParamField query="postId" type="string">
+  Exact filter on the post (position) ID.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Exact filter on the user status (`"1"` = active, `"2"` = disabled).
+</ParamField>
+
+<ParamField query="deptId" type="string">
+  Filter by department path.
+</ParamField>
+
+<ParamField query="pageSize" type="number" default="10">
+  Number of records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+### Response fields
+
+<ResponseField name="code" type="number">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="count" type="number">
+  Total number of records matching the filters.
+</ResponseField>
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="User object fields">
+    <ResponseField name="userId" type="number">Unique user ID.</ResponseField>
+    <ResponseField name="username" type="string">Login username.</ResponseField>
+    <ResponseField name="nickName" type="string">Display name.</ResponseField>
+    <ResponseField name="phone" type="string">Phone number.</ResponseField>
+    <ResponseField name="roleId" type="number">Primary role ID.</ResponseField>
+    <ResponseField name="avatar" type="string">Avatar image path.</ResponseField>
+    <ResponseField name="sex" type="string">Sex field value.</ResponseField>
+    <ResponseField name="email" type="string">Email address.</ResponseField>
+    <ResponseField name="deptId" type="number">Department ID.</ResponseField>
+    <ResponseField name="postId" type="number">Position/post ID.</ResponseField>
+    <ResponseField name="remark" type="string">Notes or remarks.</ResponseField>
+    <ResponseField name="status" type="string">Account status (`"1"` active, `"2"` disabled).</ResponseField>
+    <ResponseField name="dept" type="object">Nested department object.</ResponseField>
+    <ResponseField name="deptIds" type="number[]">Resolved department ID list.</ResponseField>
+    <ResponseField name="postIds" type="number[]">Resolved post ID list.</ResponseField>
+    <ResponseField name="roleIds" type="number[]">Resolved role ID list.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/sys-user?username=alice&pageIndex=1&pageSize=20' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 1,
+      "data": [
+        {
+          "userId": 3,
+          "username": "alice",
+          "nickName": "Alice Zhang",
+          "phone": "13800000001",
+          "roleId": 2,
+          "avatar": "",
+          "sex": "1",
+          "email": "alice@example.com",
+          "deptId": 5,
+          "postId": 1,
+          "remark": "",
+          "status": "1",
+          "dept": { "deptId": 5, "deptName": "Engineering" }
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## GET /api/v1/sys-user/{userId}
+
+Retrieve a single user by their numeric ID.
+
+### Path parameters
+
+<ParamField path="userId" type="number" required>
+  The numeric user ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/sys-user/3 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "userId": 3,
+        "username": "alice",
+        "nickName": "Alice Zhang",
+        "phone": "13800000001",
+        "roleId": 2,
+        "email": "alice@example.com",
+        "deptId": 5,
+        "postId": 1,
+        "status": "1"
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## POST /api/v1/sys-user
+
+Create a new system user.
+
+### Request body
+
+<ParamField body="username" type="string" required>
+  Unique login username.
+</ParamField>
+
+<ParamField body="password" type="string">
+  Initial password. Hashed with bcrypt before storage.
+</ParamField>
+
+<ParamField body="nickName" type="string" required>
+  Display name shown in the UI.
+</ParamField>
+
+<ParamField body="phone" type="string" required>
+  Mobile phone number (up to 11 digits).
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Valid email address.
+</ParamField>
+
+<ParamField body="deptId" type="number" required>
+  Department the user belongs to. Must be a valid department ID.
+</ParamField>
+
+<ParamField body="roleId" type="number">
+  Role to assign to the user.
+</ParamField>
+
+<ParamField body="postId" type="number">
+  Position/post to assign.
+</ParamField>
+
+<ParamField body="sex" type="string">
+  Sex field value (e.g., `"0"` = unknown, `"1"` = male, `"2"` = female).
+</ParamField>
+
+<ParamField body="avatar" type="string">
+  Avatar image path.
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Optional notes.
+</ParamField>
+
+<ParamField body="status" type="string" default="1">
+  Account status. `"1"` = active, `"2"` = disabled.
+</ParamField>
+
+### Response fields
+
+<ResponseField name="code" type="number">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="data" type="number">
+  The new user's `userId`.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/sys-user \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "username": "bob",
+        "password": "SecurePass1!",
+        "nickName": "Bob Li",
+        "phone": "13900000002",
+        "email": "bob@example.com",
+        "deptId": 5,
+        "roleId": 2,
+        "postId": 1,
+        "status": "1"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 12,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## PUT /api/v1/sys-user
+
+Update an existing user. The `userId` field in the request body identifies which record to modify.
+
+### Request body
+
+<ParamField body="userId" type="number" required>
+  ID of the user to update.
+</ParamField>
+
+<ParamField body="username" type="string" required>
+  Updated username.
+</ParamField>
+
+<ParamField body="nickName" type="string" required>
+  Updated display name.
+</ParamField>
+
+<ParamField body="phone" type="string" required>
+  Updated phone number.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Updated email address.
+</ParamField>
+
+<ParamField body="deptId" type="number" required>
+  Updated department ID.
+</ParamField>
+
+<ParamField body="roleId" type="number">
+  Updated role ID.
+</ParamField>
+
+<ParamField body="postId" type="number">
+  Updated post ID.
+</ParamField>
+
+<ParamField body="sex" type="string">
+  Updated sex field.
+</ParamField>
+
+<ParamField body="avatar" type="string">
+  Updated avatar path.
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Updated remarks.
+</ParamField>
+
+<ParamField body="status" type="string">
+  Updated status (`"1"` or `"2"`).
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/sys-user \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "userId": 12,
+        "username": "bob",
+        "nickName": "Bob Li (Updated)",
+        "phone": "13900000002",
+        "email": "bob.updated@example.com",
+        "deptId": 5,
+        "roleId": 3,
+        "status": "1"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 12,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## DELETE /api/v1/sys-user
+
+Delete one or more users by their IDs. Accepts a JSON array of IDs for batch deletion.
+
+### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of user IDs to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/sys-user \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [12, 13]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [12, 13],
+      "msg": "删除成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Deletion is permanent. Ensure you have the correct IDs before submitting. The caller's own account cannot be deleted via this endpoint.
+</Warning>
+
+---
+
+## GET /api/v1/user/profile
+
+Get the profile of the currently authenticated user, including their assigned roles and posts.
+
+### Response fields
+
+<ResponseField name="user" type="object">
+  Full `SysUser` object for the authenticated user.
+</ResponseField>
+
+<ResponseField name="roles" type="object[]">
+  Array of `SysRole` objects assigned to the user.
+</ResponseField>
+
+<ResponseField name="posts" type="object[]">
+  Array of `SysPost` objects assigned to the user.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/user/profile \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "user": { "userId": 3, "username": "alice", "nickName": "Alice Zhang" },
+        "roles": [{ "roleId": 2, "roleName": "editor" }],
+        "posts": [{ "postId": 1, "postName": "Developer" }]
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## PUT /api/v1/user/pwd/reset
+
+Reset another user's password. Requires admin-level permissions.
+
+### Request body
+
+<ParamField body="userId" type="number" required>
+  ID of the user whose password should be reset.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  New password to set.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/user/pwd/reset \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "userId": 12,
+        "password": "NewSecurePass1!"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 12,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## PUT /api/v1/user/pwd/set
+
+Change the password for the currently authenticated user. Requires both the old and new passwords.
+
+### Request body
+
+<ParamField body="oldPassword" type="string" required>
+  The user's current password.
+</ParamField>
+
+<ParamField body="newPassword" type="string" required>
+  The desired new password.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/user/pwd/set \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "oldPassword": "123456",
+        "newPassword": "NewSecurePass1!"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": null,
+      "msg": "密码修改成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## PUT /api/v1/user/status
+
+Update the active/disabled status of a user.
+
+### Request body
+
+<ParamField body="userId" type="number" required>
+  ID of the user to update.
+</ParamField>
+
+<ParamField body="status" type="string" required>
+  New status value. `"1"` = active, `"2"` = disabled.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/user/status \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "userId": 12,
+        "status": "2"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 12,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## POST /api/v1/user/avatar
+
+Upload a new avatar image for the currently authenticated user. Send the file as `multipart/form-data` under the key `upload[]`.
+
+### Form data
+
+<ParamField body="upload[]" type="file" required>
+  The avatar image file (JPEG recommended).
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/user/avatar \
+      --header 'Authorization: Bearer <token>' \
+      --form 'upload[]=@/path/to/avatar.jpg'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": "static/uploadfile/550e8400-e29b-41d4-a716-446655440000.jpg",
+      "msg": "修改成功"
+    }
+    ```
+  </Tab>
+</Tabs>

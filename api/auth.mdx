@@ -1,0 +1,217 @@
+---
+title: "REST API: Authentication and session management"
+description: "Endpoints for logging in with username and password, obtaining JWT tokens, refreshing sessions, generating CAPTCHA images, and logging out of go-admin."
+---
+
+The authentication endpoints handle the full session lifecycle for go-admin. Login accepts credentials and returns a signed JWT, which must be included as a Bearer token on every subsequent request. The captcha endpoint provides a Base64-encoded image challenge used by the login form to prevent automated submissions. Token refresh extends an active session without re-entering credentials.
+
+**Base URL:** `http://localhost:8000`
+
+---
+
+## POST /api/v1/login
+
+Authenticate with a username and password. On success the server returns a signed JWT and an expiry timestamp. Include the token as `Authorization: Bearer <token>` on all protected endpoints.
+
+### Request body
+
+<ParamField body="username" type="string" required>
+  The account username.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The account password (plain text; the server hashes it with bcrypt internally).
+</ParamField>
+
+### Response fields
+
+<ResponseField name="code" type="number">
+  HTTP-style status code. `200` on success.
+</ResponseField>
+
+<ResponseField name="token" type="string">
+  Signed JWT for use in subsequent `Authorization: Bearer` headers.
+</ResponseField>
+
+<ResponseField name="expire" type="string">
+  RFC3339 timestamp indicating when the token expires.
+</ResponseField>
+
+<ResponseField name="msg" type="string">
+  Human-readable result message.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/login \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "username": "admin",
+        "password": "123456"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "expire": "2026-04-22T10:00:00+08:00",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "msg": "登录成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Passwords are transmitted as plain text in the request body. Always use HTTPS in production.
+</Warning>
+
+---
+
+## GET /api/v1/refresh_token
+
+Refresh an existing valid JWT. The current token must be passed in the `Authorization` header. The server returns a new token with a reset expiry. This call does **not** require the token to be expired — it can be called at any time while the current token is still valid.
+
+### Headers
+
+<ParamField header="Authorization" type="string" required>
+  `Bearer <current_valid_token>`
+</ParamField>
+
+### Response fields
+
+<ResponseField name="code" type="number">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="token" type="string">
+  New signed JWT with a refreshed expiry.
+</ResponseField>
+
+<ResponseField name="expire" type="string">
+  RFC3339 timestamp for the new token's expiry.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/refresh_token \
+      --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "expire": "2026-04-22T11:00:00+08:00",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+      "msg": ""
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## GET /api/v1/captcha
+
+Generate a CAPTCHA challenge for the login form. Returns a unique identifier and a Base64-encoded PNG digit image. Pass the `id` back to the login handler when the captcha feature is enabled, alongside the user's typed answer.
+
+### Response fields
+
+<ResponseField name="code" type="number">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="id" type="string">
+  Unique identifier for this CAPTCHA session. Pass this value to the login form.
+</ResponseField>
+
+<ResponseField name="data" type="string">
+  Base64-encoded PNG image (data URI) of the digit challenge.
+</ResponseField>
+
+<ResponseField name="msg" type="string">
+  `"success"` on success.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/captcha
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": "data:image/png;base64,iVBORw0KGgo...",
+      "id": "cptVrX8mNqLzA2bT",
+      "msg": "success"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The CAPTCHA is a numeric digit image. The server logs the correct answer internally; the answer is never returned to the client.
+</Note>
+
+---
+
+## POST /api/v1/logout
+
+Invalidate the current session. Requires a valid Bearer token. The server marks the session as logged out and clears any server-side state associated with the token.
+
+### Headers
+
+<ParamField header="Authorization" type="string" required>
+  `Bearer <token>`
+</ParamField>
+
+### Response fields
+
+<ResponseField name="code" type="number">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="msg" type="string">
+  Confirmation message.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/logout \
+      --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "msg": "退出成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Error responses
+
+| HTTP status | Meaning |
+|-------------|---------|
+| `401 Unauthorized` | Missing, expired, or malformed JWT. Re-authenticate via `POST /api/v1/login`. |
+| `403 Forbidden` | Valid token but the role does not have permission for the requested resource. |
+| `500 Internal Server Error` | Server-side failure; check server logs. |
+
+<Note>
+  All protected endpoints (those that require a token) return `401` when the `Authorization` header is absent or the token has expired. After receiving a `401`, obtain a fresh token from `POST /api/v1/login`.
+</Note>

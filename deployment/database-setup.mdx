@@ -1,0 +1,213 @@
+---
+title: "Database setup and migration for go-admin"
+description: "How to configure MySQL, PostgreSQL, SQLite, and SQL Server connections in settings.yml and run the migrate command to create tables and seed initial data."
+---
+
+go-admin uses GORM under the hood and supports four database drivers: MySQL, PostgreSQL, SQLite 3, and SQL Server. Before you start the API server for the first time you must run the `migrate` subcommand, which auto-migrates the schema and seeds the system tables (roles, menus, APIs, users, and reference data) that the admin UI depends on. This page explains the connection string format for each driver, how the `settings.yml` database block is structured, and what the migrate command actually does.
+
+## Running migrate
+
+The `migrate` subcommand reads your `settings.yml`, connects to the configured database, runs GORM `AutoMigrate` to create or update all tables, and then applies any pending versioned data migrations.
+
+```bash
+./go-admin migrate -c config/settings.yml
+```
+
+From the command definition in `cmd/migrate/server.go`:
+
+```
+Use:     "migrate"
+Short:   "Initialize the database"
+Example: "go-admin migrate -c config/settings.yml"
+```
+
+The command accepts the following flags:
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--config` | `-c` | `config/settings.yml` | Path to the settings file |
+| `--generate` | `-g` | `false` | Generate a new migration file stub instead of running migrations |
+| `--goAdmin` | `-a` | `false` | Generate a core go-admin migration file (vs. a local one) |
+| `--domain` | `-d` | `*` | Target a specific tenant database by host key |
+
+**What migrate does:**
+
+1. Loads `settings.yml` and establishes the database connection.
+2. Calls `db.AutoMigrate(&models.Migration{})` to create the migrations tracking table.
+3. Runs all versioned migration files under `cmd/migrate/migration/version/` and `cmd/migrate/migration/version-local/` that have not yet been applied.
+4. Versioned migrations insert seed rows for system APIs, menus, roles, users, departments, dictionary types, and scheduled jobs.
+
+**Re-running migrate** is safe. Completed migrations are recorded in the `migrations` table; already-applied versions are skipped. Running it a second time on an existing database will not duplicate seed data.
+
+<Note>
+  The source comment in `server.go` notes that running migrate against a compiled production binary where you cannot inspect the migration code is considered unsafe. Review the migration files before applying them to a production database.
+</Note>
+
+## Database driver configuration
+
+The `database` block in `settings.yml` controls which driver and connection string the application uses.
+
+<Tabs>
+  <Tab title="MySQL">
+    MySQL is the primary supported driver. The connection string must include `charset=utf8&parseTime=True&loc=Local` for correct Unicode and time-zone handling.
+
+    **Connection string format:**
+
+    ```
+    user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+    ```
+
+    **settings.yml database block:**
+
+    ```yaml
+    settings:
+      database:
+        # Database type: mysql, sqlite3, postgres, sqlserver
+        driver: mysql
+        # MySQL default extras: charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+        source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+    ```
+
+    **Prerequisites:** MySQL 5.7+ or MariaDB 10.3+. Create the target database and user before running migrate:
+
+    ```sql
+    CREATE DATABASE dbname CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER 'user'@'%' IDENTIFIED BY 'password';
+    GRANT ALL PRIVILEGES ON dbname.* TO 'user'@'%';
+    FLUSH PRIVILEGES;
+    ```
+
+    When migrate runs against MySQL, it sets `ENGINE=InnoDB CHARSET=utf8mb4` on each table.
+  </Tab>
+
+  <Tab title="PostgreSQL">
+    The PostgreSQL driver uses the GORM DSN format (space-separated key=value pairs).
+
+    **Connection string format:**
+
+    ```
+    host=myhost port=myport user=gorm dbname=gorm password=mypassword
+    ```
+
+    **settings.yml database block:**
+
+    ```yaml
+    settings:
+      database:
+        driver: postgres
+        source: host=127.0.0.1 port=5432 user=go_admin dbname=go_admin password=mypassword sslmode=disable TimeZone=Asia/Shanghai
+    ```
+
+    **Prerequisites:** PostgreSQL 12+. After running migrate, you must also apply the PostgreSQL-specific sequence initialization from `config/pg.sql`:
+
+    ```bash
+    psql -U go_admin -d go_admin -f config/pg.sql
+    ```
+
+    This file resets the auto-increment sequences to match the seeded row IDs so that new inserts do not collide with seed data:
+
+    ```sql
+    create sequence if not exists sys_role_role_id_seq;
+    create sequence if not exists sys_user_user_id_seq;
+    -- ...
+    select setval('sys_role_role_id_seq', 4);
+    select setval('sys_user_user_id_seq', 5);
+    -- (and so on for each seeded table)
+    ```
+  </Tab>
+
+  <Tab title="SQLite">
+    SQLite requires no external server. The `source` value is a file path to the `.db` file. If the file does not exist, SQLite creates it.
+
+    **settings.yml database block (`config/settings.sqlite.yml`):**
+
+    ```yaml
+    settings:
+      application:
+        mode: dev
+        host: 0.0.0.0
+        name: testApp
+        port: 8000
+        readtimeout: 3000
+        writertimeout: 2000
+        enabledp: false
+      logger:
+        path: temp/logs
+        stdout: ''
+        level: trace
+        enableddb: false
+      jwt:
+        secret: go-admin
+        timeout: 3600
+      database:
+        # Database type: sqlite3
+        driver: sqlite3
+        # Path to the SQLite database file
+        source: go-admin-db.db
+    ```
+
+    **Prerequisites:** If you are building with SQLite support enabled, pass the `sqlite3` build tag:
+
+    ```bash
+    go build -tags sqlite3 -ldflags="-w -s" -a -installsuffix -o go-admin .
+    # or using the Makefile:
+    make build-sqlite
+    ```
+
+    <Note>
+      The Docker demo image (`settings.demo.yml`) uses SQLite with `source: ./go-admin-db.db` and includes a pre-populated `go-admin-db.db` file. This is suitable for evaluation only, not production.
+    </Note>
+  </Tab>
+
+  <Tab title="SQL Server">
+    SQL Server uses a URL-style connection string with the `sqlserver://` scheme.
+
+    **Connection string format:**
+
+    ```
+    sqlserver://user:password@host?database=dbname
+    ```
+
+    **settings.yml database block:**
+
+    ```yaml
+    settings:
+      database:
+        # Database type: sqlserver
+        driver: sqlserver
+        source: sqlserver://user:password@127.0.0.1?database=go_admin
+    ```
+
+    **Prerequisites:** SQL Server 2017+ or Azure SQL. The `db-sqlserver.sql` seed file uses `SET IDENTITY_INSERT` syntax, so the connecting user needs `ALTER TABLE` permission in addition to DML permissions.
+
+    After running migrate, apply the SQL Server seed file to set sequence values:
+
+    ```bash
+    sqlcmd -S 127.0.0.1 -U user -P password -d go_admin -i config/db-sqlserver.sql
+    ```
+  </Tab>
+</Tabs>
+
+## Multi-database (per-tenant routing)
+
+go-admin supports routing different HTTP hosts to different databases using the `databases` block. Each key in the map is a host string (matching the request's `Host` header); the value specifies a driver and connection string for that tenant.
+
+```yaml
+settings:
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+#  databases:
+#    'localhost:8000':
+#      driver: mysql
+#        source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+#      registers:
+#        - sources:
+#            - user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+```
+
+To migrate a specific tenant database, pass its host key with the `--domain` flag:
+
+```bash
+./go-admin migrate -c config/settings.yml --domain localhost:8000
+```

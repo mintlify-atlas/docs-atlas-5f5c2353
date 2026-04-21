@@ -1,0 +1,417 @@
+---
+title: "Configure go-admin with settings.yml"
+description: "Complete reference for every section in go-admin's settings.yml: application, logger, JWT, database, code generation, cache, queue, and locker."
+keywords: ["go-admin", "configuration", "settings.yml", "database", "jwt", "redis", "cache", "queue", "locker", "logger"]
+---
+
+go-admin is configured through a single YAML file, `config/settings.yml`. Every subsystem — the HTTP server, logger, JWT auth, database connections, code generator, cache, queue, and distributed locker — reads its settings from this file. You pass the file path to any CLI command with the `-c` flag:
+
+```bash
+./go-admin server -c config/settings.yml
+./go-admin migrate -c config/settings.yml
+```
+
+The root key for all settings is `settings`. Every section documented below is a child of that key.
+
+---
+
+## `application`
+
+Controls the HTTP server and global runtime behaviour.
+
+```yaml
+settings:
+  application:
+    mode: dev          # dev | test | prod | demo
+    host: 0.0.0.0      # Bind address; defaults to all interfaces
+    name: testApp      # Application name
+    port: 8000         # HTTP listen port
+    readtimeout: 1     # HTTP read timeout in seconds
+    writertimeout: 2   # HTTP write timeout in seconds
+    enabledp: false    # Enable data-scope permission filtering
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `mode` | string | Runtime mode. `dev` enables debug output; `prod` sets Gin to release mode; `demo` enables demo-mode write restrictions. |
+| `host` | string | IP address to bind to. Use `0.0.0.0` to listen on all interfaces. |
+| `name` | string | Application name used in logs and banners. |
+| `port` | integer | HTTP port number. Default: `8000`. |
+| `readtimeout` | integer | Server read timeout in seconds. |
+| `writertimeout` | integer | Server write timeout in seconds. |
+| `enabledp` | boolean | Toggle data-scope permission enforcement. Set to `true` to restrict query results by the user's organization scope. |
+
+---
+
+## `ssl`
+
+Enables HTTPS. When `enable` is `false` (the default), the server listens on plain HTTP.
+
+```yaml
+settings:
+  ssl:
+    domain: localhost:8000
+    enable: false
+    key: keystring       # TLS private key string or path
+    pem: temp/pem.pem    # Path to the TLS certificate PEM file
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `domain` | string | The domain name used for TLS. |
+| `enable` | boolean | Set to `true` to enable HTTPS. |
+| `key` | string | TLS private key. |
+| `pem` | string | Path to the PEM certificate file. |
+
+---
+
+## `logger`
+
+Controls log output format, level, and destination.
+
+```yaml
+settings:
+  logger:
+    path: temp/logs    # Directory for log files
+    stdout: ''         # Empty = write to file; any other value = write to stdout only
+    level: trace       # trace | debug | info | warn | error | fatal
+    enableddb: false   # Log SQL queries to the database log
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `path` | string | Directory where log files are written. |
+| `stdout` | string | When non-empty, log output goes to the console and not to the file. Leave empty to write to `path`. |
+| `level` | string | Minimum log level to emit. One of `trace`, `debug`, `info`, `warn`, `error`, or `fatal`. |
+| `enableddb` | boolean | When `true`, all SQL queries executed by GORM are written to the log. Useful during development; disable in production. |
+
+---
+
+## `jwt`
+
+Configures JSON Web Token generation and validation.
+
+```yaml
+settings:
+  jwt:
+    secret: go-admin   # HMAC signing secret
+    timeout: 3600      # Token validity in seconds (1 hour)
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `secret` | string | HMAC signing key used to sign and verify all tokens. |
+| `timeout` | integer | Token lifetime in seconds. After expiry the client must re-authenticate. |
+
+<Warning>
+  Change `jwt.secret` from the default value `go-admin` before deploying to production. Any attacker who knows the secret can forge valid tokens for any user, including admin accounts. Use a long random string.
+</Warning>
+
+---
+
+## `database`
+
+Connects go-admin to a relational database. The `driver` field selects the backend; the `source` field provides the connection string.
+
+```yaml
+settings:
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+```
+
+<Note>
+  Supported drivers are `mysql`, `sqlite3`, `postgres`, and `sqlserver`. Choose the driver that matches your infrastructure. SQLite3 requires no external server and is suitable for local development.
+</Note>
+
+### Connection string formats by driver
+
+```yaml
+# MySQL (default options include charset=utf8&parseTime=True&loc=Local&timeout=1000ms)
+source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+
+# SQLite3
+source: sqlite3.db
+
+# PostgreSQL
+source: host=myhost port=myport user=gorm dbname=gorm password=mypassword
+
+# SQL Server
+source: sqlserver://username:password@host?database=dbname
+```
+
+### Multi-database configuration
+
+go-admin supports connecting to multiple databases simultaneously using the `databases` block. This is used for multi-tenant setups where different hosts or tenants access different databases.
+
+```yaml
+settings:
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+#  databases:
+#    'localhost:8000':
+#      driver: mysql
+#      source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+#      registers:
+#        - sources:
+#            - user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+```
+
+The key under `databases` is the tenant host identifier used at runtime to select the correct connection.
+
+You can also use `registers` under the primary `database` block to register additional replica or read sources:
+
+```yaml
+settings:
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+    registers:
+      - sources:
+          - user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+```
+
+---
+
+## `gen`
+
+Settings for the code generation tool.
+
+```yaml
+settings:
+  gen:
+    dbname: dbname              # Database name to read table schemas from
+    frontpath: ../go-admin-ui/src  # Path to the frontend src directory (relative)
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `dbname` | string | The database name whose table schemas the code generator inspects when building CRUD modules. |
+| `frontpath` | string | Relative path to the frontend `src` directory. Generated Vue files are written here. Both backend and frontend repos must share the same parent directory for the default value to work. |
+
+---
+
+## `extend`
+
+A free-form map for any custom configuration your application needs. go-admin makes these values available at runtime without requiring code changes to the core framework. Define any key-value structure here and read it through the extension config mechanism.
+
+```yaml
+settings:
+  extend:
+    demo:
+      name: data
+    # amap:
+    #   key: your-amap-api-key
+```
+
+---
+
+## `cache`
+
+Configures the cache backend. go-admin supports an in-process memory cache or Redis.
+
+### Memory cache (default)
+
+```yaml
+settings:
+  cache:
+    memory: ''   # The key must be present; the value is ignored
+```
+
+Setting the `memory` key enables in-process caching. No external service is required. This is the default in `settings.yml`.
+
+### Redis cache
+
+```yaml
+settings:
+  cache:
+#    redis:
+#      addr: 127.0.0.1:6379
+#      password: xxxxxx
+#      db: 2
+```
+
+To use Redis, comment out the `memory` key and uncomment the `redis` block:
+
+```yaml
+settings:
+  cache:
+    redis:
+      addr: 127.0.0.1:6379
+      password: yourpassword
+      db: 0
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `redis.addr` | string | Redis server address in `host:port` format. |
+| `redis.password` | string | Redis authentication password. Leave empty if Redis has no password. |
+| `redis.db` | integer | Redis database index to use. |
+
+---
+
+## `queue`
+
+Configures the internal task queue used for background jobs such as saving login logs and operation logs.
+
+### Memory queue (default)
+
+```yaml
+settings:
+  queue:
+    memory:
+      poolSize: 100   # Maximum number of concurrent workers
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `memory.poolSize` | integer | Number of goroutines in the worker pool. |
+
+### Redis queue
+
+For distributed deployments, replace the memory queue with a Redis-backed stream queue:
+
+```yaml
+settings:
+  queue:
+#    redis:
+#      addr: 127.0.0.1:6379
+#      password: xxxxxx
+#      producer:
+#        streamMaxLength: 100
+#        approximateMaxLength: true
+#      consumer:
+#        visibilityTimeout: 60
+#        bufferSize: 100
+#        concurrency: 10
+#        blockingTimeout: 5
+#        reclaimInterval: 1
+```
+
+Uncommented and configured:
+
+```yaml
+settings:
+  queue:
+    redis:
+      addr: 127.0.0.1:6379
+      password: yourpassword
+      producer:
+        streamMaxLength: 100
+        approximateMaxLength: true
+      consumer:
+        visibilityTimeout: 60
+        bufferSize: 100
+        concurrency: 10
+        blockingTimeout: 5
+        reclaimInterval: 1
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `redis.addr` | string | Redis address. |
+| `redis.password` | string | Redis password. |
+| `producer.streamMaxLength` | integer | Maximum number of entries retained in the Redis stream. |
+| `producer.approximateMaxLength` | boolean | Use approximate trimming (`MAXLEN ~`) for better performance. |
+| `consumer.visibilityTimeout` | integer | Seconds before an unacknowledged message is reclaimed. |
+| `consumer.bufferSize` | integer | Internal channel buffer size per consumer. |
+| `consumer.concurrency` | integer | Number of concurrent consumer goroutines. |
+| `consumer.blockingTimeout` | integer | Seconds to block waiting for new messages before polling again. |
+| `consumer.reclaimInterval` | integer | Seconds between reclaim scans for stale messages. |
+
+---
+
+## `locker`
+
+Configures the distributed lock backend used to coordinate work across multiple instances. The locker requires Redis.
+
+```yaml
+settings:
+  locker:
+    redis:
+      # addr and password fields use the same format as cache.redis
+```
+
+Configure it the same way as `cache.redis`:
+
+```yaml
+settings:
+  locker:
+    redis:
+      addr: 127.0.0.1:6379
+      password: yourpassword
+```
+
+---
+
+## Complete minimal example
+
+The following is a complete `settings.yml` suitable for a local development environment using MySQL:
+
+```yaml
+settings:
+  application:
+    mode: dev
+    host: 0.0.0.0
+    name: testApp
+    port: 8000
+    readtimeout: 1
+    writertimeout: 2
+    enabledp: false
+  logger:
+    path: temp/logs
+    stdout: ''
+    level: trace
+    enableddb: false
+  jwt:
+    secret: change-this-in-production
+    timeout: 3600
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+  gen:
+    dbname: dbname
+    frontpath: ../go-admin-ui/src
+  extend:
+    demo:
+      name: data
+  cache:
+    memory: ''
+  queue:
+    memory:
+      poolSize: 100
+```
+
+## Complete SQLite3 example (demo/local)
+
+This mirrors the configuration used by the live demo instances and requires no database server:
+
+```yaml
+settings:
+  application:
+    mode: dev
+    host: 0.0.0.0
+    name: testApp
+    port: 8000
+    readtimeout: 10000
+    writertimeout: 20000
+    enabledp: false
+  logger:
+    path: temp/logs
+    stdout: ''
+    level: trace
+    enableddb: false
+  jwt:
+    secret: go-admin
+    timeout: 3600
+  database:
+    driver: sqlite3
+    source: ./go-admin-db.db
+  gen:
+    dbname: testhhh
+    frontpath: ../go-admin-ui/src
+  queue:
+    memory:
+      poolSize: 100
+```

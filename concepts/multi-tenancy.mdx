@@ -1,0 +1,133 @@
+---
+title: "Multi-tenant data isolation and per-host routing in go-admin"
+description: "How go-admin routes HTTP Host headers to dedicated databases and uses department data permissions for tenant isolation. Covers single vs. multi-database modes."
+---
+
+go-admin supports two deployment modes: a single shared database for all traffic, and a per-host multi-database mode where each `Host` header value resolves to its own database connection and Casbin enforcer. The multi-database mode is the foundation for SaaS platforms that need to host multiple independent admin portals from a single running process, with strict isolation between tenants at the data layer.
+
+## Single-database vs. multi-database mode
+
+<Note>
+  Single-database mode is the default and is controlled by the `database` block in `settings.yml`. Multi-database mode is enabled by replacing (or supplementing) it with the `databases` block, keyed by `Host` header value. Both blocks can coexist: `database` acts as a fallback for hosts not listed in `databases`.
+</Note>
+
+### Single-database mode
+
+All requests share one database connection regardless of the `Host` header. This is the standard configuration for a single-tenant or development deployment:
+
+```yaml
+settings:
+  database:
+    driver: mysql
+    source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+```
+
+### Multi-database mode
+
+Enable per-host routing by adding a `databases` block. Each key is the exact `Host` value (including port) that clients send. The SDK's `WithContextDb` middleware resolves the request's `Host` to the matching entry and injects the correct `*gorm.DB` connection into the Gin context before any handler runs:
+
+```yaml
+settings:
+  databases:
+    'client-a.example.com:8000':
+      driver: mysql
+      source: user:password@tcp(10.0.0.1:3306)/tenant_a?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+    'client-b.example.com:8000':
+      driver: mysql
+      source: user:password@tcp(10.0.0.2:3306)/tenant_b?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+```
+
+Because each host entry gets its own database, you also get a separate Casbin enforcer per host. Role and permission tables in `tenant_a` are completely invisible to requests arriving on `client-b.example.com`.
+
+## How per-host routing works
+
+The `sdk.Runtime` object acts as a registry. At startup, go-admin registers one `*gorm.DB` and one `*casbin.SyncedEnforcer` per configured host. During a request, the middleware and handler code look up these objects by the `Host` header value:
+
+```go
+// Resolving the Casbin enforcer for the current request host:
+e := sdk.Runtime.GetCasbinKey(c.Request.Host)
+
+// Role insert: policies are written to the per-host enforcer:
+cb := sdk.Runtime.GetCasbinKey(c.Request.Host)
+err = s.Insert(&req, cb)
+```
+
+This means that role and Casbin policy operations — create, update, delete — automatically apply to the correct tenant enforcer without any tenant-awareness code in the business logic.
+
+## Department-scoped data permissions
+
+Within a single tenant database, data permissions provide a second layer of isolation by restricting which rows a user can read based on the department hierarchy. This complements multi-database isolation: multi-database separates tenants at the schema level, while data permissions separate teams or business units within a tenant.
+
+The `SysDept` model stores departments as a tree using a `dept_path` string (similar to a materialized path):
+
+```go
+type SysDept struct {
+    DeptId   int
+    ParentId int
+    DeptPath string  // e.g. "/1/3/7/"
+    DeptName string
+    // ...
+}
+```
+
+When `enabledp: true`, the `actions.Permission` GORM scope appends a sub-query to list operations. The `DataScope == "4"` case uses the path column to retrieve all users in the subtree:
+
+```go
+case "4":
+    return db.Where(
+        tableName+".create_by in (SELECT user_id from sys_user "+
+        "where sys_user.dept_id in(select dept_id from sys_dept "+
+        "where dept_path like ?))",
+        "%/"+pkg.IntToString(p.DeptId)+"/%",
+    )
+```
+
+## Practical example: SaaS admin platform
+
+Consider a SaaS product that provisions a dedicated admin portal for each paying customer. With go-admin's multi-database mode you can run a single binary while keeping each customer's data in an isolated MySQL database:
+
+<Steps>
+  <Step title="Provision a database per customer">
+    Create a MySQL database for each customer and run `go-admin migrate` against each DSN to initialise the schema.
+  </Step>
+  <Step title="Configure the databases block">
+    Add each customer's `Host` → DSN mapping to the `databases` block in `settings.yml`. Place the file behind a config management system or environment variable substitution tool so secrets are not stored in plain text.
+
+    ```yaml
+    settings:
+      databases:
+        'acme.yourproduct.com:443':
+          driver: mysql
+          source: acme_user:secret@tcp(db-host:3306)/acme_admin?charset=utf8&parseTime=True&loc=Local
+        'globex.yourproduct.com:443':
+          driver: mysql
+          source: globex_user:secret@tcp(db-host:3306)/globex_admin?charset=utf8&parseTime=True&loc=Local
+    ```
+  </Step>
+  <Step title="Route customer subdomains to the process">
+    Configure your reverse proxy (nginx, Caddy, etc.) to forward all customer subdomains to the go-admin process. The `Host` header is preserved automatically.
+  </Step>
+  <Step title="Seed roles and admin users">
+    Each tenant database is independent. Create the initial admin user and role inside each database. Users from `acme` cannot see or authenticate against `globex`'s data even if they share the same process.
+  </Step>
+  <Step title="Optionally enable data permissions">
+    If a tenant has an internal org structure, set `enabledp: true` and assign department scopes to roles so that, for example, a regional manager can only see records created within their department subtree.
+  </Step>
+</Steps>
+
+## Choosing the right isolation mode
+
+<CardGroup cols={2}>
+  <Card title="Single database" icon="database">
+    Use for single-tenant deployments, development environments, or small teams that share the same admin interface. Simplest to operate — one migration, one backup target.
+  </Card>
+  <Card title="Multi-database (per host)" icon="server">
+    Use when different customers or business units must have completely separate data, roles, and Casbin policies. Each host gets its own schema, enforcer, and connection pool.
+  </Card>
+  <Card title="Data permissions only" icon="shield">
+    Use when all users share one database but need row-level visibility scoped by their department. Enabled with `enabledp: true`; no extra databases required.
+  </Card>
+  <Card title="Multi-database + data permissions" icon="lock">
+    Combine both for maximum isolation: separate schemas per tenant, plus department-level row filtering within each tenant. Suitable for large enterprise SaaS products.
+  </Card>
+</CardGroup>

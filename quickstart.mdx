@@ -1,80 +1,259 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Get started with go-admin"
+description: "Stand up a go-admin backend API server from source: clone, configure, migrate the database, and make your first authenticated request."
+keywords: ["go-admin", "quickstart", "install", "setup", "gin", "database migration", "sqlite3", "cgo"]
 ---
 
-## Get started in three steps
+This guide walks you through running the go-admin backend on your local machine. By the end you will have a running API server, a seeded database, and access to the Swagger UI where you can explore and test every endpoint.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
+  <Step title="Install prerequisites">
+    You need the following tools installed before you begin.
 
-### Step 1: Set up your local environment
+    | Tool | Minimum version | Notes |
+    |---|---|---|
+    | Go | 1.18 | Required to build the backend |
+    | Git | any | Required to clone the repository |
+    | Node.js | v14.16.0 | Required only if you are running the frontend |
+    | npm | 6.14.11 | Required only if you are running the frontend |
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    Verify your Go version:
 
-### Step 2: Deploy your changes
+    ```bash
+    go version
+    ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    <Note>
+      The backend compiles and runs without Node.js. You only need Node.js if you intend to run one of the Vue or React frontends alongside the API.
+    </Note>
+  </Step>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+  <Step title="Create a working directory and clone the backend">
+    Create a directory to hold both the backend and frontend repositories, then clone the backend:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    mkdir goadmin
+    cd goadmin
+    git clone https://github.com/go-admin-team/go-admin.git
+    ```
 
-### Step 3: Go live
+    If you also want to run the frontend, clone it into the same parent directory:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash
+    git clone https://github.com/go-admin-team/go-admin-ui.git
+    ```
+
+    <Note>
+      The backend's code generation tool writes generated Vue files to `../go-admin-ui/src` by default. Both repositories must share the same parent directory for this to work.
+    </Note>
+  </Step>
+
+  <Step title="Install Go dependencies">
+    Enter the backend directory and download all Go module dependencies:
+
+    ```bash
+    cd go-admin
+    go mod tidy
+    ```
+
+    <Warning>
+      **Windows users:** `go-admin` depends on `github.com/mattn/go-sqlite3`, which requires CGO and a C compiler (GCC). If you see either of the following errors during `go build`, CGO is not set up correctly:
+
+      ```
+      cgo: exec /missing-cc: exec: "/missing-cc": file does not exist
+      ```
+
+      ```
+      cgo: exec gcc: exec: "gcc": executable file not found in %PATH%
+      ```
+
+      Install [TDM-GCC](https://jmeubank.github.io/tdm-gcc/) or [MinGW-w64](https://www.mingw-w64.org/) to provide a GCC toolchain on Windows. See the [CGO FAQ](https://doc.go-admin.dev/guide/faq#cgo-%E7%9A%84%E9%97%AE%E9%A2%98) for detailed steps.
+    </Warning>
+  </Step>
+
+  <Step title="Configure the database connection">
+    Open `config/settings.yml` and update the `database` section to point at your database. The file ships with a MySQL placeholder:
+
+    ```yaml
+    settings:
+      database:
+        # Supported drivers: mysql, sqlite3, postgres, sqlserver
+        driver: mysql
+        source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+    ```
+
+    Replace `user`, `password`, and `dbname` with your actual MySQL credentials. To use SQLite3 instead (no server required), change the block to:
+
+    ```yaml
+    settings:
+      database:
+        driver: sqlite3
+        source: ./go-admin-db.db
+    ```
+
+    For PostgreSQL:
+
+    ```yaml
+    settings:
+      database:
+        driver: postgres
+        source: host=127.0.0.1 port=5432 user=gorm dbname=gorm password=mypassword
+    ```
+
+    <Note>
+      Supported database drivers are `mysql`, `sqlite3`, `postgres`, and `sqlserver`. The SQLite3 option is the fastest way to get started locally because it requires no external database server.
+    </Note>
+  </Step>
+
+  <Step title="Build the binary">
+    Compile the project to produce a `go-admin` executable:
+
+    <Tabs>
+      <Tab title="macOS / Linux">
+        ```bash
+        go build
+        ```
+
+        The binary is placed in the current directory as `go-admin`.
+      </Tab>
+      <Tab title="Windows">
+        ```bash
+        go build
+        ```
+
+        The binary is placed in the current directory as `go-admin.exe`.
+      </Tab>
+      <Tab title="Cross-compile">
+        Build for a different target platform from your current machine:
+
+        ```bash
+        # Build a Windows binary on macOS/Linux
+        env GOOS=windows GOARCH=amd64 go build main.go
+
+        # Build a Linux binary on macOS/Windows
+        env GOOS=linux GOARCH=amd64 go build main.go
+        ```
+      </Tab>
+    </Tabs>
+
+    To build a stripped production binary with CGO disabled (used in the `Makefile`):
+
+    ```bash
+    CGO_ENABLED=0 go build -ldflags="-w -s" -a -installsuffix "" -o go-admin .
+    ```
+
+    If you need SQLite3 support in a CGO-enabled build, use the `sqlite3` build tag:
+
+    ```bash
+    go build -tags sqlite3 -ldflags="-w -s" -a -installsuffix -o go-admin .
+    ```
+  </Step>
+
+  <Step title="Migrate the database">
+    Run the `migrate` command to create all tables and seed the initial data. Pass your configuration file with the `-c` flag:
+
+    <Tabs>
+      <Tab title="macOS / Linux">
+        ```bash
+        ./go-admin migrate -c config/settings.yml
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```bash
+        go-admin.exe migrate -c config/settings.yml
+        ```
+      </Tab>
+    </Tabs>
+
+    You should see output ending with:
+
+    ```
+    start init
+    数据库迁移开始
+    数据库基础数据初始化成功
+    ```
+
+    <Note>
+      The migrate command is safe to run only once on a fresh database. Re-running it on an existing database applies only pending migrations and will not overwrite existing data.
+    </Note>
+  </Step>
+
+  <Step title="Start the API server">
+    Launch the server with the `server` command:
+
+    <Tabs>
+      <Tab title="macOS / Linux">
+        ```bash
+        ./go-admin server -c config/settings.yml
+        ```
+      </Tab>
+      <Tab title="Windows">
+        ```bash
+        go-admin.exe server -c config/settings.yml
+        ```
+      </Tab>
+    </Tabs>
+
+    On a successful start the terminal prints:
+
+    ```
+    Server run at:
+    -  Local:   http://localhost:8000/
+    -  Network: http://YOUR_IP:8000/
+    Swagger run at:
+    -  Local:   http://localhost:8000/swagger/admin/index.html
+    -  Network: http://YOUR_IP:8000/swagger/admin/index.html
+    ```
+
+    Press `Ctrl+C` to shut the server down gracefully.
+  </Step>
+
+  <Step title="Verify the server and explore the API">
+    Open your browser and navigate to the following addresses:
+
+    | URL | Description |
+    |---|---|
+    | `http://localhost:8000` | API root |
+    | `http://localhost:8000/swagger/admin/index.html` | Interactive Swagger UI |
+
+    Log in using the seeded admin account:
+
+    - **Username:** `admin`
+    - **Password:** `123456`
+
+    <Tip>
+      The Swagger UI lets you authorize with a Bearer token and call every API endpoint interactively. Use the `/api/v1/login` endpoint to obtain a token, then click **Authorize** in Swagger and paste the token value.
+    </Tip>
+  </Step>
+</Steps>
+
+## Running with Docker
+
+If you prefer Docker, build the image and start a container with a mounted configuration file:
+
+```shell
+# Build the image
+docker build -t go-admin .
+
+# Start the container, mapping port 8000 and mounting your config
+docker run --name go-admin -p 8000:8000 \
+  -v /path/to/config/settings.yml:/config/settings.yml \
+  -d go-admin-server
+```
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Configuration reference" icon="gear" href="/configuration">
+    Explore every setting available in settings.yml — logging, JWT, caching, queues, and more.
+  </Card>
+  <Card title="Architecture overview" icon="sitemap" href="/concepts/architecture">
+    Understand the application structure and how the major components interact.
+  </Card>
+  <Card title="Authentication" icon="lock" href="/api/auth">
+    See how JWT tokens are issued and used to authenticate API requests.
+  </Card>
+  <Card title="Code generator" icon="wand-magic-sparkles" href="/guides/code-generator">
+    Generate CRUD modules from your database tables with no manual coding required.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

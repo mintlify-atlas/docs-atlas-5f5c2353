@@ -1,0 +1,619 @@
+---
+title: "REST API: Code generation tool endpoints"
+description: "Endpoints for browsing database tables, inspecting columns, managing code-gen configurations, and triggering scaffold code generation in go-admin."
+---
+
+The code generation API lets you inspect the live database schema, configure which tables should have code generated, and then trigger generation of model, API, service, DTO, router, and Vue front-end files from Go templates. All endpoints require a valid Bearer token obtained from the login endpoint.
+
+<Note>
+  Code generation is only supported when the database driver is **MySQL**. Requests made against a SQLite3 or PostgreSQL instance return `403 Forbidden`.
+</Note>
+
+## Database table browser
+
+These endpoints query `information_schema` directly and return tables and columns that exist in the database configured by `settings.yml` → `gen.dbName`.
+
+---
+
+### List database tables
+
+Returns a paginated list of all MySQL tables in the configured database that have not already been imported into the code-gen registry (`sys_tables`).
+
+```
+GET /api/v1/db/tables/page
+```
+
+**Query parameters**
+
+<ParamField query="tableName" type="string">
+  Filter results by exact table name.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="10">
+  Number of records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="integer" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+**Response**
+
+<ResponseField name="code" type="integer">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of database table objects.
+  <Expandable title="table object fields">
+    <ResponseField name="tableName" type="string">
+      Table name as stored in `information_schema.tables`.
+    </ResponseField>
+    <ResponseField name="engine" type="string">
+      Storage engine, e.g. `InnoDB`.
+    </ResponseField>
+    <ResponseField name="tableRows" type="string">
+      Estimated row count from `information_schema`.
+    </ResponseField>
+    <ResponseField name="tableCollation" type="string">
+      Table character set collation.
+    </ResponseField>
+    <ResponseField name="createTime" type="string">
+      Table creation timestamp.
+    </ResponseField>
+    <ResponseField name="updateTime" type="string">
+      Last DDL modification timestamp.
+    </ResponseField>
+    <ResponseField name="tableComment" type="string">
+      Human-readable table comment set in the DDL `COMMENT` clause.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="pageIndex" type="integer">
+  Current page.
+</ResponseField>
+
+<ResponseField name="pageSize" type="integer">
+  Records per page.
+</ResponseField>
+
+<ResponseField name="count" type="integer">
+  Total matching records.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/db/tables/page?pageSize=10&pageIndex=1" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "tableName": "sys_user",
+          "engine": "InnoDB",
+          "tableRows": "42",
+          "tableCollation": "utf8mb4_general_ci",
+          "createTime": "2024-01-15 09:00:00",
+          "updateTime": "2024-03-10 14:22:00",
+          "tableComment": "System user table"
+        }
+      ],
+      "pageIndex": 1,
+      "pageSize": 10,
+      "count": 1
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### List columns for a table
+
+Returns a paginated list of column definitions for a specific table, sourced from `information_schema.COLUMNS`. The `tableName` parameter is required.
+
+```
+GET /api/v1/db/columns/page
+```
+
+**Query parameters**
+
+<ParamField query="tableName" type="string" required>
+  Name of the table whose columns you want to inspect.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="10">
+  Number of records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="integer" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+**Response**
+
+<ResponseField name="code" type="integer">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="data" type="array">
+  Array of column definition objects.
+  <Expandable title="column object fields">
+    <ResponseField name="tableSchema" type="string">
+      Database (schema) name.
+    </ResponseField>
+    <ResponseField name="tableName" type="string">
+      Table the column belongs to.
+    </ResponseField>
+    <ResponseField name="columnName" type="string">
+      Column name as defined in the DDL.
+    </ResponseField>
+    <ResponseField name="columnDefault" type="string">
+      Default value, if any.
+    </ResponseField>
+    <ResponseField name="isNullable" type="string">
+      `"YES"` or `"NO"`.
+    </ResponseField>
+    <ResponseField name="dataType" type="string">
+      Base data type, e.g. `varchar`, `int`, `datetime`.
+    </ResponseField>
+    <ResponseField name="characterMaximumLength" type="string">
+      Maximum character length for string columns.
+    </ResponseField>
+    <ResponseField name="characterSetName" type="string">
+      Character set, e.g. `utf8mb4`.
+    </ResponseField>
+    <ResponseField name="columnType" type="string">
+      Full column type including length, e.g. `varchar(255)`.
+    </ResponseField>
+    <ResponseField name="columnKey" type="string">
+      Key type: `PRI` for primary key, `UNI` for unique, `MUL` for index.
+    </ResponseField>
+    <ResponseField name="extra" type="string">
+      Additional attributes, e.g. `auto_increment`.
+    </ResponseField>
+    <ResponseField name="columnComment" type="string">
+      Column comment from the DDL `COMMENT` clause.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/db/columns/page?tableName=sys_user&pageSize=20&pageIndex=1" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "tableSchema": "go_admin",
+          "tableName": "sys_user",
+          "columnName": "user_id",
+          "columnDefault": null,
+          "isNullable": "NO",
+          "dataType": "int",
+          "characterMaximumLength": null,
+          "characterSetName": null,
+          "columnType": "int(11)",
+          "columnKey": "PRI",
+          "extra": "auto_increment",
+          "columnComment": "User primary key"
+        }
+      ],
+      "pageIndex": 1,
+      "pageSize": 20,
+      "count": 15
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Code-gen table registry (`sys_tables`)
+
+These endpoints manage the internal registry of tables that have been configured for code generation. Each record stores metadata that drives template rendering.
+
+---
+
+### List registered tables
+
+Returns a paginated list of tables that have been imported into the code-gen registry.
+
+```
+GET /api/v1/sys/tables/page
+```
+
+**Query parameters**
+
+<ParamField query="tableName" type="string">
+  Filter by exact table name.
+</ParamField>
+
+<ParamField query="tableComment" type="string">
+  Filter by exact table comment.
+</ParamField>
+
+<ParamField query="pageSize" type="integer" default="10">
+  Number of records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="integer" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+**Response**
+
+Each item in `data` is a `SysTables` object. Key fields are described below.
+
+<ResponseField name="data" type="array">
+  <Expandable title="SysTables fields">
+    <ResponseField name="tableId" type="integer">Unique registry ID.</ResponseField>
+    <ResponseField name="tableName" type="string">Database table name.</ResponseField>
+    <ResponseField name="tableComment" type="string">Human-readable description.</ResponseField>
+    <ResponseField name="className" type="string">PascalCase Go struct name, e.g. `SysUser`.</ResponseField>
+    <ResponseField name="packageName" type="string">Go package name, e.g. `admin`.</ResponseField>
+    <ResponseField name="moduleName" type="string">Kebab-case module identifier used in file paths.</ResponseField>
+    <ResponseField name="businessName" type="string">camelCase business identifier used in permissions.</ResponseField>
+    <ResponseField name="functionName" type="string">Display name of the generated feature.</ResponseField>
+    <ResponseField name="functionAuthor" type="string">Author field written into generated file headers.</ResponseField>
+    <ResponseField name="pkColumn" type="string">Primary key column name.</ResponseField>
+    <ResponseField name="pkGoField" type="string">Primary key Go field name.</ResponseField>
+    <ResponseField name="pkJsonField" type="string">Primary key JSON field name.</ResponseField>
+    <ResponseField name="isAuth" type="integer">`1` = route requires authentication, `2` = public route.</ResponseField>
+    <ResponseField name="isDataScope" type="integer">Whether data-scope filtering is enabled.</ResponseField>
+    <ResponseField name="isLogicalDelete" type="string">`"1"` = use logical (soft) delete.</ResponseField>
+    <ResponseField name="logicalDeleteColumn" type="string">Column name used for soft deletes, e.g. `is_del`.</ResponseField>
+    <ResponseField name="columns" type="array">Column configuration records (see `SysColumns` below).</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/sys/tables/page?pageSize=10&pageIndex=1" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        {
+          "tableId": 3,
+          "tableName": "sys_post",
+          "tableComment": "Post",
+          "className": "SysPost",
+          "packageName": "admin",
+          "moduleName": "sys-post",
+          "businessName": "sysPost",
+          "functionName": "Post",
+          "functionAuthor": "wenjianzhang",
+          "pkColumn": "post_id",
+          "pkGoField": "PostId",
+          "pkJsonField": "postId",
+          "isAuth": 1,
+          "isDataScope": 1,
+          "isLogicalDelete": "1",
+          "logicalDeleteColumn": "is_del",
+          "columns": []
+        }
+      ],
+      "pageIndex": 1,
+      "pageSize": 10,
+      "count": 1
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### Get table info by ID
+
+Returns the full table configuration including all associated column records.
+
+```
+GET /api/v1/sys/tables/info/{tableId}
+```
+
+**Path parameters**
+
+<ParamField path="tableId" type="integer" required>
+  Registry ID of the table to retrieve.
+</ParamField>
+
+**Response**
+
+<ResponseField name="data.info" type="object">
+  The full `SysTables` record.
+</ResponseField>
+
+<ResponseField name="data.list" type="array">
+  The associated `SysColumns` records for the table.
+  <Expandable title="SysColumns fields">
+    <ResponseField name="columnId" type="integer">Primary key of the column record.</ResponseField>
+    <ResponseField name="tableId" type="integer">Parent table registry ID.</ResponseField>
+    <ResponseField name="columnName" type="string">Database column name.</ResponseField>
+    <ResponseField name="columnComment" type="string">Column description.</ResponseField>
+    <ResponseField name="columnType" type="string">Full column type, e.g. `varchar(255)`.</ResponseField>
+    <ResponseField name="goType" type="string">Mapped Go type, e.g. `string`, `int`, `time.Time`.</ResponseField>
+    <ResponseField name="goField" type="string">PascalCase Go struct field name.</ResponseField>
+    <ResponseField name="jsonField" type="string">camelCase JSON key name.</ResponseField>
+    <ResponseField name="isPk" type="string">`"1"` if this column is the primary key.</ResponseField>
+    <ResponseField name="isRequired" type="string">`"1"` if the column is NOT NULL.</ResponseField>
+    <ResponseField name="isInsert" type="string">`"1"` if included in create operations.</ResponseField>
+    <ResponseField name="isEdit" type="string">`"1"` if included in update operations.</ResponseField>
+    <ResponseField name="isList" type="string">`"1"` if shown in list views.</ResponseField>
+    <ResponseField name="isQuery" type="string">`"1"` if available as a search filter.</ResponseField>
+    <ResponseField name="queryType" type="string">Query operator: `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `LIKE`, `BETWEEN`.</ResponseField>
+    <ResponseField name="htmlType" type="string">Suggested front-end widget: `input`, `select`, `radio`, `checkbox`, `datetime`, `textarea`, `imageUpload`.</ResponseField>
+    <ResponseField name="dictType" type="string">Dictionary type key for enum columns.</ResponseField>
+    <ResponseField name="sort" type="integer">Display order of the column.</ResponseField>
+    <ResponseField name="fkTableName" type="string">Foreign key source table name, if applicable.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+### Import table into registry
+
+Reads one or more tables from `information_schema` and creates corresponding `sys_tables` and `sys_columns` records. Pass a comma-separated list of table names.
+
+```
+POST /api/v1/sys/tables/info
+```
+
+**Form parameters**
+
+<ParamField body="tables" type="string" required>
+  Comma-separated list of table names to import, e.g. `sys_post,sys_dept`.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X POST "https://example.com/api/v1/sys/tables/info" \
+      -H "Authorization: Bearer <token>" \
+      -d "tables=sys_post,sys_dept"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "msg": "添加成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### Update table configuration
+
+Updates the `sys_tables` record and all associated `sys_columns` records. Send the full updated object as JSON in the request body.
+
+```
+PUT /api/v1/sys/tables/info
+```
+
+**Request body**
+
+Send a `SysTables` JSON object. All editable fields may be updated, including the `columns` array.
+
+---
+
+### Delete table from registry
+
+Removes a `sys_tables` record and all its `sys_columns` records. Pass `tableId` as a query parameter (multiple IDs accepted).
+
+```
+DELETE /api/v1/sys/tables/info/{tableId}
+```
+
+<ParamField path="tableId" type="integer" required>
+  Registry ID of the table to delete.
+</ParamField>
+
+---
+
+## Code generation triggers
+
+These endpoints invoke the template engine and write generated source files to disk.
+
+---
+
+### Preview generated code
+
+Returns all generated file contents as a JSON map without writing anything to disk. Use this to review templates before committing to file generation.
+
+```
+GET /api/v1/gen/preview/{tableId}
+```
+
+<ParamField path="tableId" type="integer" required>
+  Registry ID of the table to preview.
+</ParamField>
+
+**Response**
+
+<ResponseField name="data" type="object">
+  A map of template file keys to generated source strings.
+  <Expandable title="keys returned">
+    <ResponseField name="template/model.go.template" type="string">GORM model source.</ResponseField>
+    <ResponseField name="template/api.go.template" type="string">Gin handler source.</ResponseField>
+    <ResponseField name="template/js.go.template" type="string">Front-end API JS module source.</ResponseField>
+    <ResponseField name="template/vue.go.template" type="string">Vue component source.</ResponseField>
+    <ResponseField name="template/router.go.template" type="string">Gin router registration source.</ResponseField>
+    <ResponseField name="template/dto.go.template" type="string">DTO struct source.</ResponseField>
+    <ResponseField name="template/service.go.template" type="string">Service layer source.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/gen/preview/3" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "template/model.go.template": "package models\n\ntype SysPost struct { ... }",
+        "template/api.go.template": "package apis\n\nfunc (e SysPost) GetPage(...) { ... }",
+        "template/js.go.template": "import request from ...",
+        "template/vue.go.template": "<template>...</template>",
+        "template/router.go.template": "r.GET(\"/sys-post\", ...)",
+        "template/dto.go.template": "package dto\n\ntype SysPostGetPageReq struct { ... }",
+        "template/service.go.template": "package service\n\nfunc (e *SysPost) GetPage(...) { ... }"
+      },
+      "msg": ""
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### Generate and write code to project
+
+Renders all templates for the given table and writes the output files directly into the go-admin project tree and the front-end path configured via `gen.frontPath` in `settings.yml`.
+
+```
+GET /api/v1/gen/toproject/{tableId}
+```
+
+<ParamField path="tableId" type="integer" required>
+  Registry ID of the table to generate.
+</ParamField>
+
+The following files are written:
+
+| Output file | Description |
+|---|---|
+| `./app/{packageName}/models/{tableName}.go` | GORM model |
+| `./app/{packageName}/apis/{tableName}.go` | Gin handlers |
+| `./app/{packageName}/router/{tableName}.go` | Route registration |
+| `./app/{packageName}/service/dto/{tableName}.go` | Request/response DTOs |
+| `./app/{packageName}/service/{tableName}.go` | Business logic service |
+| `{frontPath}/api/{packageName}/{moduleName}.js` | Axios API module |
+| `{frontPath}/views/{packageName}/{moduleName}/index.vue` | Vue list+form page |
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/gen/toproject/3" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": "",
+      "msg": "Code generated successfully！"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### Generate API migration file
+
+Creates a database migration Go file in `./cmd/migrate/migration/version-local/` based on the table's column definitions. The file name is a millisecond Unix timestamp.
+
+```
+GET /api/v1/gen/apitofile/{tableId}
+```
+
+<ParamField path="tableId" type="integer" required>
+  Registry ID of the table.
+</ParamField>
+
+---
+
+### Generate menus and permission entries
+
+Creates the `sys_menu` entries (parent menu, child page menu, and CRUD permission buttons) for the given table. This wires the generated module into the go-admin permission system.
+
+```
+GET /api/v1/gen/todb/{tableId}
+```
+
+<ParamField path="tableId" type="integer" required>
+  Registry ID of the table.
+</ParamField>
+
+---
+
+### Get table tree
+
+Returns a flat list of all registered tables, each including their full column configuration, suitable for rendering a tree-picker in the UI.
+
+```
+GET /api/v1/gen/tabletree
+```
+
+---
+
+## Configuration reference
+
+Code generation reads two keys from `settings.yml`:
+
+```yaml
+gen:
+  dbName: go_admin      # MySQL database to read information_schema from
+  frontPath: ../go-admin-ui  # Absolute or relative path to the Vue front-end root
+```
+
+<Warning>
+  The `frontPath` directory must exist before calling `/api/v1/gen/toproject`. The handler creates sub-directories but the root must be present.
+</Warning>
+
+## Typical workflow
+
+The following curl sequence covers the full code-gen flow: find a table, import it, preview the output, then write the files to disk.
+
+```bash
+# 1. Find the table in the database
+curl -X GET "https://example.com/api/v1/db/tables/page?tableName=sys_post" \
+  -H "Authorization: Bearer <token>"
+
+# 2. Import it into the registry (note the tableId returned is used in step 4)
+curl -X POST "https://example.com/api/v1/sys/tables/info" \
+  -H "Authorization: Bearer <token>" \
+  -d "tables=sys_post"
+
+# 3. Get the assigned tableId
+curl -X GET "https://example.com/api/v1/sys/tables/page?tableName=sys_post" \
+  -H "Authorization: Bearer <token>"
+
+# 4. Preview the generated code (tableId = 5 in this example)
+curl -X GET "https://example.com/api/v1/gen/preview/5" \
+  -H "Authorization: Bearer <token>"
+
+# 5. Generate and write files to the project
+curl -X GET "https://example.com/api/v1/gen/toproject/5" \
+  -H "Authorization: Bearer <token>"
+
+# 6. Register menus and permissions in the database
+curl -X GET "https://example.com/api/v1/gen/todb/5" \
+  -H "Authorization: Bearer <token>"
+```

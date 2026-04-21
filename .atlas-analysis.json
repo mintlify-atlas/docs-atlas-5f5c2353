@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "go-admin",
+  "projectType": "framework",
+  "projectName": "go-admin",
+  "projectDescription": "A Go-based backend admin scaffold powered by Gin, GORM, JWT, and Casbin RBAC, paired with Vue front-ends, enabling developers to spin up a full-featured permission management system in minutes.",
   "theme": "maple",
-  "colors": {
-    "primary": "#1890FF",
-    "light": "#E6F7FF",
-    "dark": "#0050B3"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/go-admin-team/go-admin"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/go-admin-team/go-admin"
-    }
-  },
+  "primaryColor": "#1890FF",
+  "lightColor": "#E6F7FF",
+  "darkColor": "#0050B3",
   "navigation": {
     "tabs": [
       {
@@ -84,5 +72,42 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "RBAC access control via Casbin",
+    "JWT authentication with refresh tokens",
+    "Code generation tool (zero-code CRUD from DB tables)",
+    "Visual form builder with drag-and-drop",
+    "Multi-database support (MySQL, PostgreSQL, SQLite, SQL Server)",
+    "Scheduled job management with cron expressions",
+    "Swagger API documentation (auto-generated)",
+    "Multi-tenant support",
+    "Operation and login audit logs",
+    "Server monitoring dashboard",
+    "File storage (local, OSS, Qiniu, Huawei OBS)",
+    "Vue front-end support (Element UI, Arco Design, Ant Design)"
+  ],
+  "publicApiSurface": [
+    "POST /api/v1/login",
+    "GET /api/v1/refresh_token",
+    "GET /api/v1/sys-user",
+    "POST /api/v1/sys-user",
+    "PUT /api/v1/sys-user/{userId}",
+    "DELETE /api/v1/sys-user",
+    "GET /api/v1/role",
+    "POST /api/v1/role",
+    "GET /api/v1/menu",
+    "GET /api/v1/dept",
+    "GET /api/v1/dict/data",
+    "GET /api/v1/sys-config",
+    "GET /api/v1/sys-opera-log",
+    "GET /api/v1/sys-login-log",
+    "GET /api/v1/post",
+    "GET /api/v1/sys-api",
+    "GET /api/v1/db/tables",
+    "GET /api/v1/db/columns",
+    "GET /api/v1/gen/code",
+    "GET /api/v1/file/upload",
+    "GET /api/v1/server-monitor"
+  ]
 }

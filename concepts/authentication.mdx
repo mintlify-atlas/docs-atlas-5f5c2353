@@ -1,0 +1,144 @@
+---
+title: "Authenticate requests with JWT tokens in go-admin"
+description: "Learn how to obtain a Bearer token by logging in, attach it to API requests, refresh it before expiry, and handle 401 errors in go-admin."
+---
+
+Every protected endpoint in go-admin requires a signed JSON Web Token (JWT) passed as a `Bearer` token in the `Authorization` header. Tokens are issued at login, expire after a configurable duration (default 3600 seconds), and can be refreshed without re-entering credentials. This page walks through the complete flow from your first login call to handling token expiry.
+
+## Obtaining a token
+
+Send a `POST` request to `/api/v1/login` with a JSON body containing your credentials. In non-development mode the request must also include a valid captcha code and UUID; in `dev` mode you can pass any non-empty string for `code` and `uuid`.
+
+<Tabs>
+  <Tab title="curl">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/login \
+      -H "Content-Type: application/json" \
+      -d '{
+        "username": "admin",
+        "password": "123456",
+        "code": "0",
+        "uuid": "0"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "expire": "2024-01-15T11:00:00+08:00",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    }
+    ```
+  </Tab>
+</Tabs>
+
+The `token` field is your Bearer token. The `expire` field shows the UTC timestamp at which the token becomes invalid.
+
+<Warning>
+  Never commit your `jwt.secret` to version control. The default value in `settings.yml` is `go-admin`. Change it to a long, random string before deploying to any non-development environment. All existing tokens are invalidated when the secret changes.
+</Warning>
+
+## Making authenticated requests
+
+Include the token in every subsequent request using the `Authorization: Bearer <token>` header:
+
+<Tabs>
+  <Tab title="List roles">
+    ```bash
+    curl http://localhost:8000/api/v1/role \
+      -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    ```
+  </Tab>
+  <Tab title="Get current menus">
+    ```bash
+    curl http://localhost:8000/api/v1/menurole \
+      -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+    ```
+  </Tab>
+  <Tab title="Create a user">
+    ```bash
+    curl -X POST http://localhost:8000/api/v1/user \
+      -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+      -H "Content-Type: application/json" \
+      -d '{"username": "alice", "password": "s3cr3t", "roleId": 2}'
+    ```
+  </Tab>
+</Tabs>
+
+The token can also be supplied as a query parameter (`?token=...`) or a cookie named `jwt`, but the `Authorization` header is the recommended approach for API clients.
+
+## Refreshing a token
+
+Before your token expires, call `GET /api/v1/refresh_token` with the current token in the header. A new token with a fresh expiry is returned:
+
+```bash
+curl http://localhost:8000/api/v1/refresh_token \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "code": 200,
+  "expire": "2024-01-15T12:00:00+08:00",
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...NEW..."
+}
+```
+
+The refresh window is one hour regardless of the configured token timeout. If more than one hour has passed since the token was issued, the refresh will be rejected and you must log in again.
+
+## Token expiry and error responses
+
+Token expiry is controlled by the `jwt.timeout` field in `config/settings.yml`:
+
+```yaml
+jwt:
+  secret: go-admin          # Change this in production
+  timeout: 3600             # Seconds until token expires
+```
+
+In `dev` mode the timeout is overridden to approximately 100 years so that you are never prompted to log in during development.
+
+When a request is made with a missing, malformed, or expired token, the JWT middleware returns an HTTP 200 response with a non-200 application code:
+
+```json
+{
+  "code": 401,
+  "msg": "Token is expired"
+}
+```
+
+<Tabs>
+  <Tab title="Missing token">
+    ```json
+    { "code": 401, "msg": "auth header is empty" }
+    ```
+  </Tab>
+  <Tab title="Expired token">
+    ```json
+    { "code": 401, "msg": "Token is expired" }
+    ```
+  </Tab>
+  <Tab title="Invalid token">
+    ```json
+    { "code": 401, "msg": "signature is invalid" }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  go-admin returns HTTP status 200 for all application-level errors. Check the `code` field in the JSON body, not the HTTP status code, to determine whether a request succeeded.
+</Note>
+
+## Logging out
+
+Send a `POST` request to `/api/v1/logout` with your token. The server records a logout log entry and returns a success response. JWTs are stateless, so the client is responsible for discarding the token locally.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/logout \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{ "code": 200, "msg": "退出成功" }
+```

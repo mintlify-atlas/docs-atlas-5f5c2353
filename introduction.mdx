@@ -1,0 +1,87 @@
+---
+title: "go-admin: Go admin scaffold overview"
+description: "go-admin is a front-end/back-end separated admin scaffold built on Gin, GORM, Casbin, and Vue. Ship role-based admin panels without writing boilerplate."
+keywords: ["go-admin", "gin", "gorm", "casbin", "jwt", "vue", "admin scaffold", "rbac", "golang"]
+---
+
+go-admin is a full-stack admin scaffold that pairs a Go backend (Gin + GORM + Casbin + JWT) with a Vue frontend. It handles the infrastructure every admin panel needs — authentication, role-based access control, menu management, operation logging, and database migrations — so you can focus on building the business logic that matters. Initialize a working system by editing a single configuration file and running two CLI commands.
+
+## Key features
+
+- **RESTful API design** — Consistent resource-oriented endpoints following REST conventions throughout.
+- **Gin web framework** — Rich middleware support for authentication, CORS, access logging, and request tracking IDs built in.
+- **RBAC via Casbin** — Fine-grained role-based access control with per-organization data scope permissions.
+- **JWT authentication** — Stateless token-based auth with configurable secret and expiry.
+- **Swagger documentation** — API docs auto-generated from source code annotations via swaggo.
+- **GORM database layer** — Supports MySQL, SQLite3, PostgreSQL, and SQL Server through a unified interface.
+- **Code generation tool** — Generate full CRUD handlers, models, and Vue pages from a database table definition with zero hand-written code.
+- **Form builder** — Visual drag-and-drop page layout construction.
+- **Multi-command mode** — Separate CLI commands for the API server, database migrations, and code generation.
+- **Configuration-driven setup** — Map database connections, JWT secrets, log paths, and cache backends through a single `settings.yml` file.
+
+## Built-in modules
+
+go-admin ships with a complete set of system management modules ready to use:
+
+| Module | Description |
+|---|---|
+| User management | Configure system operators and their accounts |
+| Department management | Organizational tree with data-scope permissions |
+| Position management | User job position configuration |
+| Menu management | System menus, operation permissions, and button-level access |
+| Role management | Assign menu permissions and data scope by organization |
+| Dictionary management | Maintain frequently used fixed reference data |
+| Parameter management | Dynamic system configuration at runtime |
+| Operation log | Record and query all normal and abnormal system operations |
+| Login log | Track login events including exceptions |
+| Interface documentation | Auto-generated API docs from business code |
+| Code generation | Visual CRUD generation from table structure |
+| Form builder | Custom page layouts via drag-and-drop |
+| Service monitoring | Server resource and status information |
+| Content management | Demo module with category and content management |
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| HTTP framework | [Gin](https://github.com/gin-gonic/gin) v1.10 |
+| ORM | [GORM](https://gorm.io) v1.25 |
+| Access control | [Casbin](https://casbin.org) v2 |
+| Authentication | JWT ([golang-jwt/jwt](https://github.com/golang-jwt/jwt) v5) |
+| CLI | [Cobra](https://github.com/spf13/cobra) v1.9 |
+| Configuration | [Viper](https://github.com/spf13/viper) via go-admin-core |
+| API docs | [swaggo/swag](https://github.com/swaggo/swag) |
+| Frontend (Vue 2) | Element UI |
+| Frontend (Vue 3) | Arco Design |
+| Frontend (React) | Ant Design Pro |
+
+## Online demos
+
+Try go-admin before running it locally. All demos use the same default credentials.
+
+| Demo | URL | Frontend |
+|---|---|---|
+| Element UI (Vue 2) | [vue2.go-admin.dev](https://vue2.go-admin.dev/#/login) | Vue 2 + Element UI |
+| Arco Design (Vue 3) | [vue3.go-admin.dev](https://vue3.go-admin.dev/#/login) | Vue 3 + Arco Design |
+| Ant Design Pro | [antd.go-admin.pro](https://antd.go-admin.pro/) | React + Ant Design |
+
+<Note>
+  Default credentials for all demo instances: **admin** / **123456**
+</Note>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Clone the repo, configure your database, and have a running API server in minutes.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how the Gin router, GORM models, Casbin enforcer, and queue system fit together.
+  </Card>
+  <Card title="Authentication" icon="lock" href="/api/auth">
+    Learn how JWT tokens are issued, validated, and used to protect API routes.
+  </Card>
+  <Card title="Code generator" icon="wand-magic-sparkles" href="/guides/code-generator">
+    Generate complete CRUD modules from your database tables with no manual coding.
+  </Card>
+</CardGroup>

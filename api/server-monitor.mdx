@@ -1,0 +1,265 @@
+---
+title: "REST API: Server monitoring and metrics"
+description: "Retrieve real-time CPU, memory, disk, network, swap, OS, and Go runtime metrics for the go-admin host server. Also exposes a Prometheus metrics endpoint."
+---
+
+The server monitoring API returns a snapshot of the host machine's resource usage and Go runtime state in a single response. It is useful for embedding a live dashboard in the admin UI or for periodic health checks by external monitoring tools.
+
+<Note>
+  This endpoint requires a valid Bearer token **and** the caller's role must pass the `AuthCheckRole` middleware check. Requests that lack either credential are rejected before the handler runs.
+</Note>
+
+## Get server info
+
+Returns CPU usage, memory statistics, disk usage, swap usage, network I/O speed, OS information, Go runtime information, and server uptime in a single call.
+
+```
+GET /api/v1/server-monitor
+```
+
+No query parameters or request body are required.
+
+**Response**
+
+<ResponseField name="code" type="integer">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="os" type="object">
+  Operating system and Go runtime information.
+  <Expandable title="os fields">
+    <ResponseField name="goOs" type="string">
+      Go runtime OS identifier, e.g. `linux`, `darwin`, `windows`. Sourced from `runtime.GOOS`.
+    </ResponseField>
+    <ResponseField name="arch" type="string">
+      CPU architecture, e.g. `amd64`, `arm64`. Sourced from `runtime.GOARCH`.
+    </ResponseField>
+    <ResponseField name="mem" type="integer">
+      Go memory profiling rate (`runtime.MemProfileRate`).
+    </ResponseField>
+    <ResponseField name="compiler" type="string">
+      Go compiler identifier, typically `gc`. Sourced from `runtime.Compiler`.
+    </ResponseField>
+    <ResponseField name="version" type="string">
+      Go toolchain version, e.g. `go1.21.0`. Sourced from `runtime.Version()`.
+    </ResponseField>
+    <ResponseField name="numGoroutine" type="integer">
+      Number of goroutines currently running. Sourced from `runtime.NumGoroutine()`.
+    </ResponseField>
+    <ResponseField name="ip" type="string">
+      Primary non-loopback IP address of the server.
+    </ResponseField>
+    <ResponseField name="projectDir" type="string">
+      Absolute path of the go-admin working directory.
+    </ResponseField>
+    <ResponseField name="hostName" type="string">
+      Hostname of the server. Sourced from `gopsutil/host.Info().Hostname`.
+    </ResponseField>
+    <ResponseField name="time" type="string">
+      Current server time formatted as `2006-01-02 15:04:05`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="mem" type="object">
+  Physical memory (RAM) statistics. Values are in **megabytes**.
+  <Expandable title="mem fields">
+    <ResponseField name="used" type="integer">
+      Used memory in MB.
+    </ResponseField>
+    <ResponseField name="total" type="integer">
+      Total installed memory in MB.
+    </ResponseField>
+    <ResponseField name="percent" type="number">
+      Memory utilisation percentage, rounded to 2 decimal places.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="swap" type="object">
+  Swap space statistics. Values are in **bytes**.
+  <Expandable title="swap fields">
+    <ResponseField name="used" type="integer">
+      Bytes of swap currently in use (`SwapTotal - SwapFree`).
+    </ResponseField>
+    <ResponseField name="total" type="integer">
+      Total swap space in bytes.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="cpu" type="object">
+  CPU statistics.
+  <Expandable title="cpu fields">
+    <ResponseField name="cpuInfo" type="array">
+      Array of CPU info objects from `gopsutil/cpu.Info()`. Each object contains model name, vendor, cores, speed, and cache size.
+    </ResponseField>
+    <ResponseField name="percent" type="number">
+      Overall CPU utilisation percentage (across all cores), rounded to 2 decimal places.
+    </ResponseField>
+    <ResponseField name="cpuNum" type="integer">
+      Number of physical CPUs (logical cores excluded).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="disk" type="object">
+  Root filesystem disk usage. Values are in **gigabytes**.
+  <Expandable title="disk fields">
+    <ResponseField name="total" type="number">
+      Total disk size of the `/` (root) partition in GB.
+    </ResponseField>
+    <ResponseField name="used" type="number">
+      Used disk space on the `/` partition in GB.
+    </ResponseField>
+    <ResponseField name="percent" type="number">
+      Disk utilisation percentage of the `/` partition, rounded to 2 decimal places.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="net" type="object">
+  Network I/O speed. Values are in **kilobytes per second**. Loopback, tunnel, Docker, veth, bridge, and Kubernetes virtual interfaces are excluded from the calculation.
+  <Expandable title="net fields">
+    <ResponseField name="in" type="number">
+      Inbound network speed in KB/s, rounded to 2 decimal places.
+    </ResponseField>
+    <ResponseField name="out" type="number">
+      Outbound network speed in KB/s, rounded to 2 decimal places.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="bootTime" type="integer">
+  Server uptime in **hours** since the last boot.
+</ResponseField>
+
+<ResponseField name="location" type="string">
+  Static label identifying the server location. Currently hard-coded to `"Aliyun"`.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/server-monitor" \
+      -H "Authorization: Bearer <token>"
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "os": {
+        "goOs": "linux",
+        "arch": "amd64",
+        "mem": 524288,
+        "compiler": "gc",
+        "version": "go1.21.5",
+        "numGoroutine": 24,
+        "ip": "192.168.1.10",
+        "projectDir": "/home/deploy/go-admin",
+        "hostName": "prod-server-01",
+        "time": "2026-04-21 08:30:00"
+      },
+      "mem": {
+        "used": 3072,
+        "total": 8192,
+        "percent": 37.5
+      },
+      "swap": {
+        "used": 0,
+        "total": 2147483648
+      },
+      "cpu": {
+        "cpuInfo": [
+          {
+            "cpu": 0,
+            "vendorId": "GenuineIntel",
+            "family": "6",
+            "model": "85",
+            "stepping": 7,
+            "physicalId": "0",
+            "coreId": "0",
+            "cores": 4,
+            "modelName": "Intel(R) Xeon(R) Gold 6161 CPU @ 2.20GHz",
+            "mhz": 2200,
+            "cacheSize": 22528,
+            "flags": ["fpu", "vme"]
+          }
+        ],
+        "percent": 12.5,
+        "cpuNum": 4
+      },
+      "disk": {
+        "total": 200,
+        "used": 45,
+        "percent": 22.5
+      },
+      "net": {
+        "in": 128.34,
+        "out": 64.12
+      },
+      "bootTime": 720,
+      "location": "Aliyun"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Prometheus metrics endpoint
+
+go-admin exposes a standard Prometheus scrape endpoint. This endpoint does **not** require authentication.
+
+```
+GET /api/v1/metrics
+```
+
+The endpoint is served by the official `prometheus/client_golang` HTTP handler (`promhttp.Handler()`). It returns metrics in the [Prometheus text exposition format](https://prometheus.io/docs/instrumenting/exposition_formats/).
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl -X GET "https://example.com/api/v1/metrics"
+    ```
+  </Tab>
+  <Tab title="Response (excerpt)">
+    ```text
+    # HELP go_gc_duration_seconds A summary of the pause duration of garbage collection cycles.
+    # TYPE go_gc_duration_seconds summary
+    go_gc_duration_seconds{quantile="0"} 4.9351e-05
+    go_gc_duration_seconds{quantile="0.25"} 7.424e-05
+    go_gc_duration_seconds{quantile="0.5"} 0.000108688
+    # HELP go_goroutines Number of goroutines that currently exist.
+    # TYPE go_goroutines gauge
+    go_goroutines 24
+    # HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+    # TYPE process_cpu_seconds_total counter
+    process_cpu_seconds_total 1.23
+    ```
+  </Tab>
+</Tabs>
+
+## Health check endpoint
+
+A simple liveness check returns HTTP `200 OK` with an empty body. No authentication required.
+
+```
+GET /api/v1/health
+```
+
+Use this endpoint in load balancer health checks or container readiness probes.
+
+```bash
+curl -f "https://example.com/api/v1/health" && echo "healthy"
+```
+
+## Unit reference
+
+| Field | Unit |
+|---|---|
+| `mem.used`, `mem.total` | Megabytes (MB) |
+| `swap.used`, `swap.total` | Bytes |
+| `disk.total`, `disk.used` | Gigabytes (GB) |
+| `net.in`, `net.out` | Kilobytes per second (KB/s) |
+| `bootTime` | Hours |
+| `cpu.percent`, `mem.percent`, `disk.percent` | Percentage (0–100) |

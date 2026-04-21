@@ -1,0 +1,187 @@
+---
+title: "REST API: File upload and storage endpoints"
+description: "Upload single files, multiple files, or base64-encoded images via multipart form. Supports local storage, Alibaba Cloud OSS, and Qiniu Cloud Kodo backends."
+---
+
+The file upload API provides a single endpoint that accepts multipart form uploads and stores files either on the local filesystem or in a configured cloud object storage backend. The `source` form field selects the storage destination at upload time, so no code changes are needed when switching between providers.
+
+<Note>
+  This endpoint requires a valid Bearer token. Unauthenticated requests are rejected with `401 Unauthorized`.
+</Note>
+
+## Upload file
+
+Uploads one or more files and returns a response with the file URL, size, and MIME type.
+
+```
+POST /api/v1/public/uploadFile
+```
+
+The `Content-Type` header must be `multipart/form-data`.
+
+**Form fields**
+
+<ParamField body="type" type="string" required>
+  Upload mode:
+  - `"1"` — single file upload
+  - `"2"` — multiple files upload (multiple `file` fields with the same key)
+  - `"3"` — base64-encoded image (pass image data URI in the `file` field)
+
+  If omitted, single-file mode is used as the default.
+</ParamField>
+
+<ParamField body="file" type="file">
+  For `type=1` and `type=2`: the binary file attachment(s). The field name must be `file`. For `type=2`, repeat the field once per file.
+
+  For `type=3`: a base64 data URI string, e.g. `data:image/png;base64,iVBORw0...`.
+</ParamField>
+
+<ParamField body="source" type="string">
+  Storage backend selector:
+  - `"1"` — local filesystem (default when omitted)
+  - `"2"` — Alibaba Cloud OSS — file is uploaded to the `img/` prefix in the configured bucket
+  - `"3"` — Qiniu Cloud Kodo — file is uploaded to the `img/` prefix in the configured bucket
+
+  When `source` is `"2"` or `"3"`, the `path` and `full_path` in the response reflect the remote object key, not a local URL.
+</ParamField>
+
+**Response — single file (`type=1` or `type=3`)**
+
+<ResponseField name="code" type="integer">
+  `200` on success.
+</ResponseField>
+
+<ResponseField name="data" type="object">
+  A single `FileResponse` object.
+  <Expandable title="FileResponse fields">
+    <ResponseField name="size" type="integer">
+      File size in bytes.
+    </ResponseField>
+    <ResponseField name="path" type="string">
+      Server-relative path to the uploaded file, e.g. `/static/uploadfile/550e8400-e29b-41d4-a716-446655440000.png`.
+    </ResponseField>
+    <ResponseField name="full_path" type="string">
+      Absolute URL constructed from the request host, e.g. `http://example.com/static/uploadfile/550e8400-e29b-41d4-a716-446655440000.png`. For cloud backends this field contains the remote object key.
+    </ResponseField>
+    <ResponseField name="name" type="string">
+      Original file name as provided by the client. Empty for base64 uploads.
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      Detected MIME type, e.g. `image/png`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Response — multiple files (`type=2`)**
+
+<ResponseField name="data" type="array">
+  Array of `FileResponse` objects, one per uploaded file, with the same fields as above.
+</ResponseField>
+
+<Tabs>
+  <Tab title="Single file">
+    ```bash
+    curl -X POST "https://example.com/api/v1/public/uploadFile" \
+      -H "Authorization: Bearer <token>" \
+      -F "type=1" \
+      -F "file=@/path/to/image.png"
+    ```
+  </Tab>
+  <Tab title="Multiple files">
+    ```bash
+    curl -X POST "https://example.com/api/v1/public/uploadFile" \
+      -H "Authorization: Bearer <token>" \
+      -F "type=2" \
+      -F "file=@/path/to/first.png" \
+      -F "file=@/path/to/second.jpg"
+    ```
+  </Tab>
+  <Tab title="Base64 image">
+    ```bash
+    curl -X POST "https://example.com/api/v1/public/uploadFile" \
+      -H "Authorization: Bearer <token>" \
+      -F "type=3" \
+      -F "file=data:image/jpeg;base64,/9j/4AAQSkZJRgAB..."
+    ```
+  </Tab>
+  <Tab title="Upload to OSS">
+    ```bash
+    curl -X POST "https://example.com/api/v1/public/uploadFile" \
+      -H "Authorization: Bearer <token>" \
+      -F "type=1" \
+      -F "source=2" \
+      -F "file=@/path/to/photo.jpg"
+    ```
+  </Tab>
+</Tabs>
+
+**Example response**
+
+```json
+{
+  "code": 200,
+  "data": {
+    "size": 204800,
+    "path": "/static/uploadfile/550e8400-e29b-41d4-a716-446655440000.jpg",
+    "full_path": "http://example.com/static/uploadfile/550e8400-e29b-41d4-a716-446655440000.jpg",
+    "name": "photo.jpg",
+    "type": "image/jpeg"
+  },
+  "msg": "上传成功"
+}
+```
+
+## Local storage
+
+When `source` is `"1"` (or omitted), files are saved to `static/uploadfile/` relative to the go-admin working directory. A UUID v4 is used as the file name to avoid collisions; the original extension is preserved.
+
+Uploaded files are served as static assets. Ensure your reverse proxy or the go-admin static file handler has this directory in scope.
+
+## Cloud storage backends
+
+go-admin supports three object storage drivers. Configure the active backend in `settings.yml` before use.
+
+<Tip>
+  All three backends implement the same `FileStoreType` interface, so the upload request format is identical regardless of which backend is active.
+</Tip>
+
+### Alibaba Cloud OSS (`source=2`)
+
+```yaml
+file_store:
+  endpoint: "oss-cn-hangzhou.aliyuncs.com"
+  accessKeyID: "<your-access-key-id>"
+  accessKeySecret: "<your-access-key-secret>"
+  bucketName: "<your-bucket-name>"
+```
+
+Files are stored under the `img/` prefix in the bucket.
+
+### Qiniu Cloud Kodo (`source=3`)
+
+```yaml
+file_store:
+  endpoint: "up-z0.qiniup.com"
+  accessKeyID: "<your-access-key>"
+  accessKeySecret: "<your-secret-key>"
+  bucketName: "<your-bucket-name>"
+```
+
+Files are stored under the `img/` prefix in the bucket.
+
+### Huawei Cloud OBS
+
+Huawei OBS is available as a driver (`HuaweiOBS`) through the `file_store` package but is not wired to the upload endpoint's `source` field in the current release. Configure it via `OXS.Setup(HuaweiOBS, ...)` directly in Go code if needed.
+
+## Error responses
+
+| Condition | HTTP status | Message |
+|---|---|---|
+| No file attached in single-file mode | `200` | `"图片不能为空"` |
+| Failed to create upload directory | `500` | `"初始化文件路径失败"` |
+| Failed to save file to disk | `500` | `"文件保存失败"` |
+| Third-party (cloud) upload failed | `200` | `"上传第三方失败"` |
+
+<Warning>
+  When a cloud upload fails, the handler returns HTTP `200` with a non-fatal error message in `msg`. The file may have already been saved locally. Always inspect the response body when using cloud backends.
+</Warning>

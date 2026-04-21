@@ -1,0 +1,993 @@
+---
+title: "REST API: Dictionary data and system config"
+description: "Manage dictionary types, dictionary data entries, and system config params in go-admin. Drives dropdown options and app-wide settings via key/value lookup."
+---
+
+go-admin uses a two-level dictionary system to store the label/value pairs that power dropdown menus and select inputs throughout the application. A **dictionary type** (e.g., `sys_user_sex`) is the category; **dictionary data** entries (e.g., `"Male" → "1"`, `"Female" → "2"`) are the individual options that belong to that category. Business pages query dictionary data by `dictType` key to populate their select fields at runtime.
+
+The **system config** resource stores key/value application settings. Some config entries are exposed to the frontend (those with `isFrontend = "Y"`); others are back-end-only.
+
+All endpoints require `Authorization: Bearer <token>`. Write operations require a role with management permission.
+
+**Base URL:** `http://localhost:8000`
+
+---
+
+## Dictionary type endpoints
+
+Dictionary types define the named categories for option sets. Each type has a unique `dictType` string that dictionary data entries reference.
+
+### GET /api/v1/dict/type
+
+Return a paginated list of dictionary types.
+
+#### Query parameters
+
+<ParamField query="dictName" type="string">
+  Case-insensitive partial-match filter on the dictionary name.
+</ParamField>
+
+<ParamField query="dictType" type="string">
+  Case-insensitive partial-match filter on the dictionary type key.
+</ParamField>
+
+<ParamField query="dictId" type="number[]">
+  Filter by one or more specific dictionary IDs.
+</ParamField>
+
+<ParamField query="status" type="number">
+  Exact filter on status (`1` = active, `0` = disabled).
+</ParamField>
+
+<ParamField query="pageSize" type="number" default="10">
+  Records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="count" type="number">
+  Total matching records.
+</ResponseField>
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Dictionary type object fields">
+    <ResponseField name="id" type="number">Unique dictionary type ID (stored as `dict_id`).</ResponseField>
+    <ResponseField name="dictName" type="string">Human-readable name for the category (e.g., `"User gender"`).</ResponseField>
+    <ResponseField name="dictType" type="string">Machine-readable key used to look up options (e.g., `"sys_user_sex"`).</ResponseField>
+    <ResponseField name="status" type="number">Status (`1` = active, `0` = disabled).</ResponseField>
+    <ResponseField name="remark" type="string">Optional description.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/dict/type?pageIndex=1&pageSize=10' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 2,
+      "data": [
+        {
+          "id": 1,
+          "dictName": "User gender",
+          "dictType": "sys_user_sex",
+          "status": 1,
+          "remark": "Gender options for the user form"
+        },
+        {
+          "id": 2,
+          "dictName": "System notice type",
+          "dictType": "sys_notice_type",
+          "status": 1,
+          "remark": ""
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/dict/type/{dictId}
+
+Retrieve a single dictionary type by its numeric ID.
+
+#### Path parameters
+
+<ParamField path="dictId" type="number" required>
+  The dictionary type ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/dict/type/1 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "id": 1,
+        "dictName": "User gender",
+        "dictType": "sys_user_sex",
+        "status": 1,
+        "remark": "Gender options for the user form"
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/dict/type-option-select
+
+Return all dictionary types without pagination. Intended for use in code-generation tools and dropdowns that need the complete type list.
+
+#### Query parameters
+
+Accepts the same filter parameters as `GET /api/v1/dict/type` (excluding pagination).
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/dict/type-option-select \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        { "id": 1, "dictName": "User gender", "dictType": "sys_user_sex", "status": 1 },
+        { "id": 2, "dictName": "System notice type", "dictType": "sys_notice_type", "status": 1 }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/v1/dict/type
+
+Create a new dictionary type.
+
+#### Request body
+
+<ParamField body="dictName" type="string" required>
+  Human-readable category name.
+</ParamField>
+
+<ParamField body="dictType" type="string" required>
+  Unique machine-readable key (snake_case recommended, e.g., `"sys_order_status"`).
+</ParamField>
+
+<ParamField body="status" type="number">
+  Initial status (`1` = active, `0` = disabled).
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Optional description.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/dict/type \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "dictName": "Order status",
+        "dictType": "sys_order_status",
+        "status": 1,
+        "remark": "Status options for the order form"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 3,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/dict/type/{dictId}
+
+Update an existing dictionary type.
+
+#### Path parameters
+
+<ParamField path="dictId" type="number" required>
+  The dictionary type ID to update.
+</ParamField>
+
+#### Request body
+
+Accepts the same fields as `POST /api/v1/dict/type`.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/dict/type/3 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "dictName": "Order status (updated)",
+        "dictType": "sys_order_status",
+        "status": 1
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 3,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /api/v1/dict/type
+
+Delete one or more dictionary types by their IDs.
+
+#### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of dictionary type IDs to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/dict/type \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [3]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [3],
+      "msg": "删除成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  Deleting a dictionary type does not automatically remove its associated dictionary data entries. Clean up data entries separately to avoid orphaned records.
+</Warning>
+
+---
+
+## Dictionary data endpoints
+
+Dictionary data entries are the individual label/value pairs within a type. For example, the `sys_user_sex` type might contain entries `Male → 1`, `Female → 2`, `Unknown → 0`.
+
+<Tip>
+  Use `GET /api/v1/dict-data/option-select?dictType=sys_user_sex` to fetch a compact `label`/`value` list suitable for populating a dropdown — it returns only the two fields you need without pagination overhead.
+</Tip>
+
+### GET /api/v1/dict/data
+
+Return a paginated list of dictionary data entries.
+
+#### Query parameters
+
+<ParamField query="dictType" type="string">
+  Partial-match filter on the dictionary type key. Use this to retrieve all entries for one category.
+</ParamField>
+
+<ParamField query="dictLabel" type="string">
+  Partial-match filter on the display label.
+</ParamField>
+
+<ParamField query="dictValue" type="string">
+  Partial-match filter on the stored value.
+</ParamField>
+
+<ParamField query="status" type="string">
+  Exact filter on the entry status.
+</ParamField>
+
+<ParamField query="pageSize" type="number" default="10">
+  Records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="number" default="1">
+  Page number (1-indexed).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="count" type="number">
+  Total matching records.
+</ResponseField>
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Dictionary data object fields">
+    <ResponseField name="dictCode" type="number">Unique entry ID (primary key).</ResponseField>
+    <ResponseField name="dictSort" type="number">Display sort order within the type.</ResponseField>
+    <ResponseField name="dictLabel" type="string">Human-readable label shown in dropdowns.</ResponseField>
+    <ResponseField name="dictValue" type="string">Machine value stored in records.</ResponseField>
+    <ResponseField name="dictType" type="string">Parent dictionary type key this entry belongs to.</ResponseField>
+    <ResponseField name="cssClass" type="string">Optional CSS class for styling the tag/chip.</ResponseField>
+    <ResponseField name="listClass" type="string">Table badge style (e.g., `"success"`, `"danger"`).</ResponseField>
+    <ResponseField name="isDefault" type="string">`"Y"` if this is the default selection.</ResponseField>
+    <ResponseField name="status" type="number">Entry status (`1` = active, `0` = disabled).</ResponseField>
+    <ResponseField name="default" type="string">Alternative default flag field.</ResponseField>
+    <ResponseField name="remark" type="string">Optional notes.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/dict/data?dictType=sys_user_sex&pageIndex=1&pageSize=10' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 3,
+      "data": [
+        {
+          "dictCode": 1,
+          "dictSort": 0,
+          "dictLabel": "Unknown",
+          "dictValue": "0",
+          "dictType": "sys_user_sex",
+          "cssClass": "",
+          "listClass": "warning",
+          "isDefault": "N",
+          "status": 1
+        },
+        {
+          "dictCode": 2,
+          "dictSort": 1,
+          "dictLabel": "Male",
+          "dictValue": "1",
+          "dictType": "sys_user_sex",
+          "listClass": "primary",
+          "isDefault": "Y",
+          "status": 1
+        },
+        {
+          "dictCode": 3,
+          "dictSort": 2,
+          "dictLabel": "Female",
+          "dictValue": "2",
+          "dictType": "sys_user_sex",
+          "listClass": "danger",
+          "isDefault": "N",
+          "status": 1
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/dict/data/{dictCode}
+
+Retrieve a single dictionary data entry by its code.
+
+#### Path parameters
+
+<ParamField path="dictCode" type="number" required>
+  The dictionary data entry ID.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url http://localhost:8000/api/v1/dict/data/2 \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": {
+        "dictCode": 2,
+        "dictSort": 1,
+        "dictLabel": "Male",
+        "dictValue": "1",
+        "dictType": "sys_user_sex",
+        "isDefault": "Y",
+        "status": 1
+      },
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/dict-data/option-select
+
+Return all entries for a given `dictType` as compact `label`/`value` pairs. This is the preferred endpoint for populating dropdowns and select components in the front-end.
+
+#### Query parameters
+
+<ParamField query="dictType" type="string" required>
+  The dictionary type key to look up (e.g., `"sys_user_sex"`).
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Option select fields">
+    <ResponseField name="label" type="string">Display label for the option.</ResponseField>
+    <ResponseField name="value" type="string">Stored value for the option.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/dict-data/option-select?dictType=sys_user_sex' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [
+        { "label": "Unknown", "value": "0" },
+        { "label": "Male", "value": "1" },
+        { "label": "Female", "value": "2" }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### POST /api/v1/dict/data
+
+Add a new entry to an existing dictionary type.
+
+#### Request body
+
+<ParamField body="dictType" type="string" required>
+  The parent dictionary type key.
+</ParamField>
+
+<ParamField body="dictLabel" type="string" required>
+  Display label for the option.
+</ParamField>
+
+<ParamField body="dictValue" type="string" required>
+  Stored value for the option.
+</ParamField>
+
+<ParamField body="dictSort" type="number">
+  Sort order within the type.
+</ParamField>
+
+<ParamField body="cssClass" type="string">
+  Optional CSS class for tag styling.
+</ParamField>
+
+<ParamField body="listClass" type="string">
+  Badge style (`"success"`, `"info"`, `"warning"`, `"danger"`, `"primary"`).
+</ParamField>
+
+<ParamField body="isDefault" type="string">
+  `"Y"` to mark as the default selection.
+</ParamField>
+
+<ParamField body="status" type="number">
+  Entry status (`1` = active).
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Optional notes.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request POST \
+      --url http://localhost:8000/api/v1/dict/data \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "dictType": "sys_order_status",
+        "dictLabel": "Pending",
+        "dictValue": "0",
+        "dictSort": 1,
+        "listClass": "warning",
+        "isDefault": "Y",
+        "status": 1,
+        "remark": "Order awaiting processing"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 10,
+      "msg": "创建成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/dict/data/{dictCode}
+
+Update an existing dictionary data entry.
+
+#### Path parameters
+
+<ParamField path="dictCode" type="number" required>
+  The dictionary data entry ID to update.
+</ParamField>
+
+#### Request body
+
+Accepts the same fields as `POST /api/v1/dict/data`.
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/dict/data/10 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "dictType": "sys_order_status",
+        "dictLabel": "Awaiting payment",
+        "dictValue": "0",
+        "dictSort": 1,
+        "listClass": "warning",
+        "status": 1
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 10,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### DELETE /api/v1/dict/data
+
+Delete one or more dictionary data entries by their codes.
+
+#### Request body
+
+<ParamField body="ids" type="number[]" required>
+  Array of `dictCode` values to delete.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/dict/data \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [10]}'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": [10],
+      "msg": "删除成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## System config endpoints
+
+System config records are key/value parameters that control application behaviour. Entries marked `isFrontend = "Y"` are served to the front-end application via the public `/api/v1/app-config` endpoint.
+
+### GET /api/v1/config
+
+Return a paginated list of config parameters.
+
+#### Query parameters
+
+<ParamField query="configName" type="string">
+  Partial-match filter on the config name.
+</ParamField>
+
+<ParamField query="configKey" type="string">
+  Partial-match filter on the config key.
+</ParamField>
+
+<ParamField query="configType" type="string">
+  Exact filter on the config type.
+</ParamField>
+
+<ParamField query="isFrontend" type="string">
+  Exact filter (`"Y"` = front-end visible, `"N"` = back-end only).
+</ParamField>
+
+<ParamField query="pageSize" type="number" default="10">
+  Records per page.
+</ParamField>
+
+<ParamField query="pageIndex" type="number" default="1">
+  Page number.
+</ParamField>
+
+#### Response fields
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="Config object fields">
+    <ResponseField name="id" type="number">Unique config ID.</ResponseField>
+    <ResponseField name="configName" type="string">Human-readable parameter name.</ResponseField>
+    <ResponseField name="configKey" type="string">Machine-readable key used for lookup.</ResponseField>
+    <ResponseField name="configValue" type="string">Current parameter value.</ResponseField>
+    <ResponseField name="configType" type="string">Category tag for the parameter.</ResponseField>
+    <ResponseField name="isFrontend" type="string">`"Y"` if this config is exposed to the front-end.</ResponseField>
+    <ResponseField name="remark" type="string">Description.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/config?pageIndex=1&pageSize=10' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 1,
+      "data": [
+        {
+          "id": 1,
+          "configName": "Main page switch",
+          "configKey": "sys.index.skinName",
+          "configValue": "skin-blue",
+          "configType": "Y",
+          "isFrontend": "Y",
+          "remark": "Default UI skin"
+        }
+      ],
+      "msg": "查询成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### PUT /api/v1/config/{id}
+
+Update a system config parameter.
+
+#### Path parameters
+
+<ParamField path="id" type="number" required>
+  The config record ID to update.
+</ParamField>
+
+#### Request body
+
+<ParamField body="configName" type="string">
+  Updated parameter name.
+</ParamField>
+
+<ParamField body="configKey" type="string">
+  Updated key (changing this may break callers that look up by key).
+</ParamField>
+
+<ParamField body="configValue" type="string">
+  New value for the parameter.
+</ParamField>
+
+<ParamField body="configType" type="string">
+  Updated type/category.
+</ParamField>
+
+<ParamField body="isFrontend" type="string">
+  `"Y"` or `"N"` to control front-end visibility.
+</ParamField>
+
+<ParamField body="remark" type="string">
+  Updated description.
+</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request PUT \
+      --url http://localhost:8000/api/v1/config/1 \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{
+        "configName": "Main page switch",
+        "configKey": "sys.index.skinName",
+        "configValue": "skin-dark",
+        "configType": "Y",
+        "isFrontend": "Y",
+        "remark": "Default UI skin"
+      }'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "data": 1,
+      "msg": "更新成功"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  The `/api/v1/app-config` endpoint (no auth required) returns all config entries where `isFrontend = "Y"`. This is how the front-end bootstraps application settings without needing a logged-in user.
+</Note>
+
+---
+
+## Audit logs
+
+go-admin records two types of audit logs: **operation logs** (one record per API request) and **login logs** (one record per authentication attempt). Both are read-only resources — records are created automatically by middleware and can only be read or deleted.
+
+### GET /api/v1/sys-opera-log
+
+Return a paginated list of operation log entries. All entries are automatically created by the logger middleware when `enableddb` is `true` in `settings.yml`.
+
+**Query parameters**
+
+<ParamField query="title" type="string">Partial-match filter on the operation module title.</ParamField>
+<ParamField query="method" type="string">Partial-match filter on the handler function name.</ParamField>
+<ParamField query="requestMethod" type="string">Exact filter on the HTTP method (e.g. `GET`, `POST`).</ParamField>
+<ParamField query="operUrl" type="string">Partial-match filter on the request URL.</ParamField>
+<ParamField query="operIp" type="string">Partial-match filter on the client IP address.</ParamField>
+<ParamField query="status" type="string">Exact filter on status: `"1"` = success, `"2"` = error.</ParamField>
+<ParamField query="beginTime" type="string">Filter records on or after this time (format: `2006-01-02 15:04:05`).</ParamField>
+<ParamField query="endTime" type="string">Filter records on or before this time.</ParamField>
+<ParamField query="pageSize" type="integer" default="10">Records per page.</ParamField>
+<ParamField query="pageIndex" type="integer" default="1">Page number (1-indexed).</ParamField>
+
+**Response fields**
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="SysOperaLog fields">
+    <ResponseField name="id" type="integer">Log record ID.</ResponseField>
+    <ResponseField name="title" type="string">Operation module name.</ResponseField>
+    <ResponseField name="businessType" type="string">Operation type category.</ResponseField>
+    <ResponseField name="method" type="string">Handler function name.</ResponseField>
+    <ResponseField name="requestMethod" type="string">HTTP method: `GET`, `POST`, `PUT`, or `DELETE`.</ResponseField>
+    <ResponseField name="operName" type="string">Username of the operator.</ResponseField>
+    <ResponseField name="deptName" type="string">Department name of the operator.</ResponseField>
+    <ResponseField name="operUrl" type="string">Full request URL.</ResponseField>
+    <ResponseField name="operIp" type="string">Client IP address.</ResponseField>
+    <ResponseField name="operLocation" type="string">Geo-location of the client IP.</ResponseField>
+    <ResponseField name="operParam" type="string">Request parameters (JSON string).</ResponseField>
+    <ResponseField name="status" type="string">`"1"` = success, `"2"` = error.</ResponseField>
+    <ResponseField name="operTime" type="string">Timestamp of the operation.</ResponseField>
+    <ResponseField name="jsonResult" type="string">Truncated response body (JSON string).</ResponseField>
+    <ResponseField name="latencyTime" type="string">Request duration, e.g. `12ms`.</ResponseField>
+    <ResponseField name="userAgent" type="string">Client User-Agent header value.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/sys-opera-log?status=1&pageIndex=1&pageSize=20' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 150,
+      "data": [
+        {
+          "id": 42,
+          "title": "User",
+          "requestMethod": "GET",
+          "operName": "admin",
+          "operUrl": "/api/v1/sys-user",
+          "operIp": "127.0.0.1",
+          "status": "1",
+          "latencyTime": "5ms",
+          "operTime": "2024-01-15 10:30:00"
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/sys-opera-log/:id
+
+Return a single operation log entry by ID.
+
+---
+
+### DELETE /api/v1/sys-opera-log
+
+Batch-delete operation log entries by ID array.
+
+**Request body**
+
+<ParamField body="ids" type="integer[]" required>Array of log record IDs to delete.</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/sys-opera-log \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [1, 2, 3]}'
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/sys-login-log
+
+Return a paginated list of login log entries. Records are created automatically on each authentication attempt.
+
+**Query parameters**
+
+<ParamField query="username" type="string">Partial-match filter on the username.</ParamField>
+<ParamField query="ipaddr" type="string">Partial-match filter on the client IP address.</ParamField>
+<ParamField query="loginLocation" type="string">Partial-match filter on the geo-location string.</ParamField>
+<ParamField query="status" type="string">Exact filter on login status.</ParamField>
+<ParamField query="beginTime" type="string">Filter records on or after this time (format: `2006-01-02 15:04:05`).</ParamField>
+<ParamField query="endTime" type="string">Filter records on or before this time.</ParamField>
+<ParamField query="pageSize" type="integer" default="10">Records per page.</ParamField>
+<ParamField query="pageIndex" type="integer" default="1">Page number (1-indexed).</ParamField>
+
+**Response fields**
+
+<ResponseField name="data" type="object[]">
+  <Expandable title="SysLoginLog fields">
+    <ResponseField name="id" type="integer">Log record ID.</ResponseField>
+    <ResponseField name="username" type="string">Username that attempted login.</ResponseField>
+    <ResponseField name="status" type="string">Login result status.</ResponseField>
+    <ResponseField name="ipaddr" type="string">Client IP address.</ResponseField>
+    <ResponseField name="loginLocation" type="string">Geo-location string for the IP address.</ResponseField>
+    <ResponseField name="browser" type="string">Browser name extracted from User-Agent.</ResponseField>
+    <ResponseField name="os" type="string">Operating system extracted from User-Agent.</ResponseField>
+    <ResponseField name="platform" type="string">Platform/firmware from User-Agent.</ResponseField>
+    <ResponseField name="loginTime" type="string">Timestamp of the login attempt.</ResponseField>
+    <ResponseField name="msg" type="string">Status message or error detail.</ResponseField>
+    <ResponseField name="remark" type="string">Additional remarks.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request GET \
+      --url 'http://localhost:8000/api/v1/sys-login-log?username=admin&pageIndex=1&pageSize=20' \
+      --header 'Authorization: Bearer <token>'
+    ```
+  </Tab>
+  <Tab title="Response">
+    ```json
+    {
+      "code": 200,
+      "count": 24,
+      "data": [
+        {
+          "id": 7,
+          "username": "admin",
+          "status": "1",
+          "ipaddr": "127.0.0.1",
+          "loginLocation": "Internal",
+          "browser": "Chrome",
+          "os": "macOS",
+          "loginTime": "2024-01-15 09:00:00",
+          "msg": ""
+        }
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+### GET /api/v1/sys-login-log/:id
+
+Return a single login log entry by ID.
+
+---
+
+### DELETE /api/v1/sys-login-log
+
+Batch-delete login log entries by ID array.
+
+**Request body**
+
+<ParamField body="ids" type="integer[]" required>Array of log record IDs to delete.</ParamField>
+
+<Tabs>
+  <Tab title="Request">
+    ```bash
+    curl --request DELETE \
+      --url http://localhost:8000/api/v1/sys-login-log \
+      --header 'Authorization: Bearer <token>' \
+      --header 'Content-Type: application/json' \
+      --data '{"ids": [1, 2, 3]}'
+    ```
+  </Tab>
+</Tabs>

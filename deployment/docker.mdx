@@ -1,0 +1,169 @@
+---
+title: "Deploy go-admin with Docker and Docker Compose"
+description: "Step-by-step guide to building the go-admin Docker image, mounting configuration, running the container, and using Docker Compose for production deployments."
+---
+
+go-admin ships with a minimal Alpine-based `Dockerfile` and a `docker-compose.yml` that together give you a reproducible, self-contained deployment. The image copies a pre-built `main` binary and a default SQLite-backed settings file, exposes port `8000`, and starts the API server automatically. For production you will mount your own `settings.yml` over the bundled one so that database credentials, JWT secrets, and other environment-specific values are kept outside the image.
+
+## Docker workflow
+
+<Steps>
+  <Step title="Build the Docker image">
+    The `Dockerfile` expects a pre-compiled `main` binary in the project root. Build it for Linux first, then let Docker copy it into the image.
+
+    ```bash
+    # Cross-compile for Linux (run from the project root on any OS)
+    env CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -a -installsuffix "" -o main .
+
+    # Build the Docker image
+    docker build -t go-admin:latest .
+    ```
+
+    The `Makefile` wraps both steps in a single target:
+
+    ```bash
+    make build-linux
+    ```
+
+    The resulting `Dockerfile` that runs during the build:
+
+    ```dockerfile
+    FROM alpine
+
+    # ENV GOPROXY https://goproxy.cn/
+
+    RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.ustc.edu.cn/g' /etc/apk/repositories
+
+    RUN apk update --no-cache
+    RUN apk add --update gcc g++ libc6-compat
+    RUN apk add --no-cache ca-certificates
+    RUN apk add --no-cache tzdata
+    ENV TZ Asia/Shanghai
+
+    COPY ./main /main
+    COPY ./config/settings.demo.yml /config/settings.yml
+    COPY ./go-admin-db.db /go-admin-db.db
+    EXPOSE 8000
+    RUN  chmod +x /main
+    CMD ["/main","server","-c", "/config/settings.yml"]
+    ```
+
+    <Note>
+      The image bundles `settings.demo.yml` as `/config/settings.yml`. You must override this file at runtime with your own configuration — see the next step.
+    </Note>
+  </Step>
+
+  <Step title="Prepare your settings.yml">
+    Create a `config/settings.yml` on the host with your environment-specific values. At minimum, update the database connection string and the JWT secret.
+
+    ```yaml
+    settings:
+      application:
+        mode: prod
+        host: 0.0.0.0
+        name: go-admin
+        port: 8000
+        readtimeout: 1
+        writertimeout: 2
+        enabledp: false
+      logger:
+        path: temp/logs
+        stdout: ''
+        level: info
+        enableddb: false
+      jwt:
+        secret: <your-strong-random-secret>
+        timeout: 3600
+      database:
+        driver: mysql
+        source: user:password@tcp(127.0.0.1:3306)/dbname?charset=utf8&parseTime=True&loc=Local&timeout=1000ms
+    ```
+
+    <Warning>
+      Change `jwt.secret` from the repository default value `"go-admin"` before running in production. Anyone who knows the secret can forge valid tokens for your API.
+    </Warning>
+  </Step>
+
+  <Step title="Run the container">
+    Mount your host `config/` directory over the container's `/go-admin-api/config/`, map port `8000`, and start the container in the background.
+
+    ```bash
+    docker run \
+      --name go-admin \
+      -p 8000:8000 \
+      -v /absolute/path/to/config/settings.yml:/config/settings.yml \
+      -v /absolute/path/to/static:/go-admin-api/static \
+      -v /absolute/path/to/temp:/go-admin-api/temp \
+      -d \
+      --restart=always \
+      go-admin:latest
+    ```
+
+    Replace `/absolute/path/to/` with the actual paths on your host. The `static` and `temp` volumes persist uploaded files and log output between container restarts.
+  </Step>
+
+  <Step title="Verify the running API">
+    Once the container starts, the API is available on port `8000`:
+
+    ```bash
+    curl http://localhost:8000/api/v1/health
+    ```
+
+    Check container logs if the health endpoint does not respond:
+
+    ```bash
+    docker logs go-admin
+    ```
+  </Step>
+</Steps>
+
+## Docker Compose setup
+
+The repository includes a `docker-compose.yml` that mirrors the `docker run` command above and adds a named bridge network. Use this for single-host deployments where you want process supervision handled by the Docker daemon.
+
+```yaml
+version: '3.8'
+services:
+  go-admin-api:
+    container_name: go-admin
+    image: go-admin:latest
+    privileged: true
+    restart: always
+    ports:
+      - 8000:8000
+    volumes:
+      - ./config/:/go-admin-api/config/
+      - ./static/:/go-admin-api/static/
+      - ./temp/:/go-admin-api/temp/
+    networks:
+      - myweb
+networks:
+  myweb:
+    driver: bridge
+```
+
+Start the stack from the project root:
+
+```bash
+docker-compose up -d
+```
+
+Or use the `Makefile` target, which also removes stale `<none>` images:
+
+```bash
+make run
+```
+
+Stop the stack:
+
+```bash
+docker-compose down
+# or
+make stop
+```
+
+## Production image tips
+
+- The `Dockerfile` builds on `alpine`. The `gcc`, `g++`, and `libc6-compat` packages are included for CGO compatibility. If your build uses `CGO_ENABLED=0` (the default `make build` target does), you can remove those three `apk add` lines to shrink the final image by roughly 100 MB.
+- Use a multi-stage build to avoid copying build tooling into the final image — copy only the compiled `main` binary and config files into the `FROM alpine` stage.
+- Pin the Alpine tag (e.g. `FROM alpine:3.20`) to avoid unexpected base image changes on rebuild.

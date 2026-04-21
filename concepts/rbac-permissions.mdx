@@ -1,0 +1,166 @@
+---
+title: "Role-based access control and Casbin RBAC in go-admin"
+description: "Learn how go-admin's RBAC model maps users to roles, enforces API-path permissions with Casbin, controls menu visibility, and scopes data by department."
+---
+
+go-admin uses a role-based access control (RBAC) model enforced at two levels: menu visibility and API path access. Roles group a set of menus and their associated API paths; users are assigned a single role. When an authenticated request arrives, Casbin checks whether the role's key is allowed to call the requested HTTP method on the requested URL path. A separate data permission layer further restricts which database rows a role can read, filtered by department tree.
+
+## The RBAC model
+
+The relationships between entities are:
+
+```
+SysUser  ──(role_id)──►  SysRole  ──(sys_role_menu)──►  SysMenu
+                                                              │
+                                                   (sys_menu_api_rule)
+                                                              │
+                                                              ▼
+                                                           SysApi
+                                                    (HTTP path + method)
+```
+
+- **`SysUser`** has a `role_id` foreign key pointing to one `SysRole`.
+- **`SysRole`** has a many-to-many join to `SysMenu` via the `sys_role_menu` table.
+- **`SysMenu`** has a many-to-many join to `SysApi` via the `sys_menu_api_rule` table. Each `SysApi` record stores an API path and HTTP action (method).
+- When a role is saved, the service layer writes `(roleKey, path, method)` tuples into the `sys_casbin_rule` table, which Casbin reads to build its in-memory policy.
+
+## Role model fields
+
+```go
+type SysRole struct {
+    RoleId    int    // Primary key
+    RoleName  string // Display name
+    RoleKey   string // Casbin subject identifier (e.g. "admin", "editor")
+    Status    string // "1" = disabled, "2" = enabled
+    DataScope string // Data permission scope: "2", "3", "4", or "5"
+    SysMenu   *[]SysMenu `gorm:"many2many:sys_role_menu;..."`
+    SysDept   []SysDept  `gorm:"many2many:sys_role_dept;..."`
+}
+```
+
+`RoleKey` is the value placed in the JWT `rolekey` claim at login and used as the Casbin subject in every policy check.
+
+## How menu permissions work
+
+When a user logs in and the frontend calls `GET /api/v1/menurole`, the `SysMenu.GetMenuRole` handler fetches all menus associated with the user's role name:
+
+```go
+result, err := s.SetMenuRole(user.GetRoleName(c))
+```
+
+The returned tree contains only the menus the role is permitted to see. The frontend uses this to render the sidebar navigation. Menu records carry a `Permission` string (for example `"sys:user:list"`) that the frontend can use for fine-grained element-level visibility.
+
+To inspect which menus are assigned to a role, call `GET /api/v1/roleMenuTreeselect/{roleId}`:
+
+```bash
+curl http://localhost:8000/api/v1/roleMenuTreeselect/2 \
+  -H "Authorization: Bearer <token>"
+```
+
+```json
+{
+  "code": 200,
+  "data": {
+    "menus": [...],
+    "checkedKeys": [1, 3, 7, 12]
+  }
+}
+```
+
+## How API path permissions work
+
+When you create or update a role, the service iterates over every `SysApi` record linked to the role's assigned menus and writes Casbin named policies:
+
+```go
+polices = append(polices, []string{data.RoleKey, api.Path, api.Action})
+_, err = cb.AddNamedPolicies("p", polices)
+```
+
+These rows are stored in `sys_casbin_rule` and loaded into the `casbin.SyncedEnforcer` that is keyed by the request's `Host` header in the SDK runtime.
+
+The `AuthCheckRole` middleware performs the actual check on every request:
+
+```go
+res, err = e.Enforce(v["rolekey"], c.Request.URL.Path, c.Request.Method)
+```
+
+If the result is `false`, the middleware responds with a `403` application code and aborts the request chain:
+
+```json
+{ "code": 403, "msg": "对不起，您没有该接口访问权限，请联系管理员" }
+```
+
+<Note>
+  Users whose `rolekey` equals `"admin"` bypass the Casbin check entirely. All other roles — including superadmin roles you create — go through the Casbin policy check.
+</Note>
+
+Some paths are explicitly excluded from Casbin checks via the `CasbinExclude` list in the middleware package. Paths on this list are accessible to any authenticated user regardless of role.
+
+## The permission check flow
+
+<Steps>
+  <Step title="Request authenticated">
+    The JWT middleware validates the token and stores `rolekey`, `identity`, and `datascope` claims in the Gin context.
+  </Step>
+  <Step title="Admin shortcut">
+    If `rolekey == "admin"`, `AuthCheckRole` calls `c.Next()` immediately — no Casbin lookup is performed.
+  </Step>
+  <Step title="Exclusion list check">
+    The middleware checks whether the request path and method appear in `CasbinExclude`. Excluded paths proceed without a policy check.
+  </Step>
+  <Step title="Casbin policy evaluation">
+    `e.Enforce(rolekey, path, method)` is called on the host-specific `SyncedEnforcer`. Casbin returns `true` if a matching `(rolekey, path, method)` row exists in `sys_casbin_rule`.
+  </Step>
+  <Step title="Allow or deny">
+    A `true` result lets the request continue to the handler. A `false` result returns the 403 response and aborts the chain.
+  </Step>
+</Steps>
+
+## Data permission scopes
+
+Data permissions restrict which database rows a role can read — independent of which API paths the role can call. The `DataScope` field on `SysRole` controls the filter applied to queries when data permissions are enabled.
+
+<Note>
+  Data permissions are **disabled by default**. The `application.enabledp` flag in `settings.yml` is `false` out of the box. Enable it only when you need department-level row isolation.
+</Note>
+
+```yaml
+settings:
+  application:
+    enabledp: false   # Set to true to activate data scoping
+```
+
+When `enabledp` is `true`, the `actions.Permission` GORM scope is applied to list queries. The scope adds a `WHERE` clause based on the role's `DataScope` value:
+
+| `DataScope` | Filter applied |
+|---|---|
+| `"2"` | Rows created by users in any department associated with the role via `sys_role_dept` |
+| `"3"` | Rows created by users in the same department as the requesting user |
+| `"4"` | Rows created by users in the requesting user's department subtree (uses `dept_path LIKE`) |
+| `"5"` (default) | Rows created by the requesting user only |
+
+Use `PUT /api/v1/roledatascope` to update a role's `DataScope` and the list of associated departments:
+
+```bash
+curl -X PUT http://localhost:8000/api/v1/roledatascope \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"roleId": 2, "dataScope": "4", "deptIds": [1, 3]}'
+```
+
+## Role management API summary
+
+<CardGroup cols={2}>
+  <Card title="GET /api/v1/role" icon="list">
+    Paginated list of all roles. Supports filtering by `roleName`, `roleKey`, and `status`.
+  </Card>
+  <Card title="POST /api/v1/role" icon="plus">
+    Create a role. Provide `menuIds` to assign menus; Casbin policies are written automatically.
+  </Card>
+  <Card title="PUT /api/v1/role/:id" icon="pen">
+    Update a role's menus. Old Casbin policies are deleted and replaced with the new set.
+  </Card>
+  <Card title="DELETE /api/v1/role" icon="trash">
+    Delete one or more roles by ID. All associated Casbin policies are removed.
+  </Card>
+</CardGroup>

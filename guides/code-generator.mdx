@@ -1,0 +1,135 @@
+---
+title: "Generate CRUD code from database tables in go-admin"
+description: "Use the go-admin code generator to scaffold Go service, model, router, and API files plus Vue frontend components directly from your database schema."
+---
+
+The code generator reads your database schema and produces a complete CRUD implementation — Go model, DTO, service, API handler, and router files on the backend, plus a JavaScript API module and Vue list/form page on the frontend. You configure field mappings once, preview the output, and apply it to your project without writing boilerplate by hand.
+
+## How it works
+
+The generator introspects the selected table through the `GET /api/v1/db/tables/page` and `GET /api/v1/db/columns/page` endpoints, stores the configuration in the `sys_tables` metadata table, and then renders seven Go template files into your project tree. Backend files land under `app/<packageName>/` and frontend files land under the path configured in `gen.frontpath`.
+
+```
+app/<packageName>/
+├── apis/<table_name>.go        # Gin handler (GetPage, Get, Insert, Update, Delete)
+├── models/<table_name>.go      # GORM model
+├── router/<table_name>.go      # Route registration
+└── service/
+    ├── <table_name>.go         # Business logic
+    └── dto/<table_name>.go     # Request/response DTOs
+
+<frontpath>/
+├── api/<packageName>/<module-name>.js        # Axios API module
+└── views/<packageName>/<module-name>/
+    └── index.vue                             # List + form Vue page
+```
+
+## Prerequisites
+
+- The database driver must be **MySQL**. The generator does not support SQLite3 or PostgreSQL (the API returns `403` for those drivers).
+- `gen.dbname` and `gen.frontpath` must be set in `settings.yml` before running the generator.
+
+## Configuration
+
+Open `config/settings.yml` and verify the `gen` section:
+
+```yaml
+settings:
+  gen:
+    # The database name the generator reads table metadata from
+    dbname: dbname
+    # Path to the frontend src/ directory (relative to the go-admin project root)
+    frontpath: ../go-admin-ui/src
+```
+
+<Note>
+`frontpath` must point to the `src/` folder of `go-admin-ui`. The generator writes directly to `<frontpath>/api/` and `<frontpath>/views/`.
+</Note>
+
+## Workflow
+
+<Steps>
+  <Step title="Open the Code Generator">
+    Log into the admin UI and navigate to **System Tools → Code Generator**. The page lists all tables already imported into the generator's metadata store (`sys_tables`).
+  </Step>
+
+  <Step title="Import a database table">
+    Click **Import** and select one or more tables from the database table browser. The UI calls `GET /api/v1/db/tables/page` to list available tables and `GET /api/v1/db/columns/page` to fetch column metadata. Selected tables are saved to `sys_tables` via `POST /api/v1/sys/tables/info`.
+  </Step>
+
+  <Step title="Configure field mappings">
+    Click **Edit** on the imported table. For each column you can set:
+
+    - **Go type** — inferred automatically (`int`, `string`, `time.Time`) but can be overridden.
+    - **HTML component type** — `input`, `datetime`, or other form widget types.
+    - **Query type** — filter condition applied when listing records (defaults to `EQ`).
+    - **Is required** — maps to the `NOT NULL` constraint detected from the schema.
+    - **Is query field** — controls whether the column appears as a search filter.
+    - **Is insert / edit field** — controls visibility in the create and update forms.
+
+    The table-level settings include **package name** (defaults to `admin`), **business name**, **function author**, and whether to enable data-scope filtering.
+  </Step>
+
+  <Step title="Preview generated code">
+    Click **Preview** to see all seven generated files rendered side by side without writing anything to disk. The preview calls `GET /api/v1/gen/preview/<tableId>` and returns a map of template name → rendered content.
+  </Step>
+
+  <Step title="Generate and apply the code">
+    Click **Generate Code** to write all files to disk. The operation:
+
+    1. Creates the backend directories under `app/<packageName>/apis/`, `models/`, `router/`, and `service/dto/`.
+    2. Creates the frontend directories under `<frontpath>/api/<packageName>/` and `<frontpath>/views/<packageName>/<module-name>/`.
+    3. Renders and writes each template file.
+
+    Optionally click **Sync Menu** to automatically create the parent menu entry and the five permission buttons (query, add, edit, remove, list) in the `sys_menu` table.
+  </Step>
+</Steps>
+
+## Template files
+
+Templates live in the `template/v4/` directory and use Go's `text/template` syntax with the `SysTables` struct as their data context.
+
+```
+template/v4/
+├── model.go.template                          # GORM model
+├── dto.go.template                            # Request/response DTOs
+├── js.go.template                             # Frontend JS API module
+├── vue.go.template                            # Vue list + form page
+└── no_actions/
+    ├── apis.go.template                       # Gin API handler
+    ├── service.go.template                    # Service layer
+    ├── router_check_role.go.template          # Router with auth middleware
+    └── router_no_check_role.go.template       # Router without auth middleware
+```
+
+The router template used depends on the `IsAuth` field on the table config: value `1` uses `router_check_role.go.template`; value `2` uses `router_no_check_role.go.template`.
+
+## Output file locations
+
+| File | Destination |
+|------|-------------|
+| Model | `./app/<packageName>/models/<table_name>.go` |
+| API handler | `./app/<packageName>/apis/<table_name>.go` |
+| Router | `./app/<packageName>/router/<table_name>.go` |
+| DTO | `./app/<packageName>/service/dto/<table_name>.go` |
+| Service | `./app/<packageName>/service/<table_name>.go` |
+| JS module | `<frontpath>/api/<packageName>/<module-name>.js` |
+| Vue page | `<frontpath>/views/<packageName>/<module-name>/index.vue` |
+
+<Tip>
+Module names in file paths use hyphens (`my-table`) while Go package and file names use underscores (`my_table`). The generator derives the hyphenated name automatically by replacing `_` with `-` in the table name.
+</Tip>
+
+## API reference
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/db/tables/page` | List database tables (MySQL only) |
+| `GET` | `/api/v1/db/columns/page` | List columns for a table |
+| `POST` | `/api/v1/sys/tables/info` | Import tables into generator metadata |
+| `GET` | `/api/v1/sys/tables/info/{tableId}` | Get table config and columns |
+| `PUT` | `/api/v1/sys/tables/info` | Update table config |
+| `DELETE` | `/api/v1/sys/tables/info/{tableId}` | Remove table from metadata |
+| `GET` | `/api/v1/gen/preview/{tableId}` | Preview generated code |
+| `GET` | `/api/v1/gen/code/{tableId}` | Write generated code to disk |
+| `GET` | `/api/v1/gen/menu/{tableId}` | Create menu entries and permissions |
